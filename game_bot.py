@@ -4,7 +4,7 @@ import random
 import time
 
 # Put your bot token here
-API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+API_TOKEN = '8793834902:AAEUH8NxVY2J00vepALQw5WSivD4Pmi6IB8'
 bot = telebot.TeleBot(API_TOKEN)
 
 # Database Setup
