@@ -137,13 +137,66 @@ def add_coins_to_user(message):
     update_player(target_user.id, coins=new_balance)
     bot.reply_to(message, f"💰 *SUCCESS:* Added `{amount_to_add}` Z-Coins to *{target_user.first_name}*'s account!\nNew Balance: `{new_balance}` Z-Coins.")
 
+# --- 💸 USER COIN TRANSFER SYSTEM ---
+
+@bot.message_handler(commands=['paycoin'])
+def pay_coin_to_user(message):
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ Reply to someone's message with `/paycoin [amount]` to transfer coins.")
+        return
+
+    if message.reply_to_message.from_user.is_bot:
+        bot.reply_to(message, "🤖 *Error:* You cannot transfer coins to a bot!")
+        return
+
+    sender_id = message.from_user.id
+    receiver_id = message.reply_to_message.from_user.id
+
+    if sender_id == receiver_id:
+        bot.reply_to(message, "❌ You cannot transfer coins to yourself!")
+        return
+
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        bot.reply_to(message, "❌ Format: `/paycoin [amount]` (Example: `/paycoin 100`)")
+        return
+
+    amount_to_pay = int(args[1])
+    if amount_to_pay <= 0:
+        bot.reply_to(message, "❌ Amount must be greater than 0!")
+        return
+
+    sender = get_player(sender_id, message.from_user.first_name)
+    receiver = get_player(receiver_id, message.reply_to_message.from_user.first_name)
+
+    if sender_id != OWNER_ID and sender[2] < amount_to_pay:
+        bot.reply_to(message, f"❌ Transaction Failed! You don't have enough balance. Your balance: `{sender[2]}` Z-Coins.")
+        return
+
+    if sender_id != OWNER_ID:
+        update_player(sender_id, coins=sender[2] - amount_to_pay)
+        
+    update_player(receiver_id, coins=receiver[2] + amount_to_pay)
+
+    sender_bal = "♾️ Unlimited" if sender_id == OWNER_ID else f"{sender[2] - amount_to_pay}"
+    receiver_bal = f"{receiver[2] + amount_to_pay}"
+
+    success_msg = f"💸 *TRANSACTION SUCCESSFUL!*\n\n"
+    success_msg += f"👤 *From:* {sender[1]}\n"
+    success_msg += f"👤 *To:* {receiver[1]}\n"
+    success_msg += f"💰 *Amount Sent:* `{amount_to_pay}` Z-Coins\n\n"
+    success_msg += f"📊 *New Balances:*\n"
+    success_msg += f"• {sender[1]}: `{sender_bal}` Z-Coins\n"
+    success_msg += f"• {receiver[1]}: `{receiver_bal}` Z-Coins"
+
+    bot.reply_to(message, success_msg, parse_mode="Markdown")
+
 # --- 📊 STATS & RANK COMMANDS ---
 
 @bot.message_handler(commands=['bal'])
 def view_profile(message):
     p = get_player(message.from_user.id, message.from_user.first_name)
     
-    # OWNER STATUS SET TO GOD MODE
     if message.from_user.id == OWNER_ID:
         status = "🧘 God Mode"
         coins_display = "♾️ Unlimited"
@@ -195,27 +248,33 @@ def kill_user(message):
         bot.reply_to(message, "❌ Who do you want to kill? Reply to their message with this command.")
         return
         
+    if message.reply_to_message.from_user.is_bot:
+        bot.reply_to(message, "🤖 *Error:* Bots cannot participate in combat! You can only attack real users.")
+        return
+
     attacker_id = message.from_user.id
     attacker = get_player(attacker_id, message.from_user.first_name)
     victim = get_player(message.reply_to_message.from_user.id, message.reply_to_message.from_user.first_name)
     
-    # Prevent killing the owner
-    if victim[0] == OWNER_ID:
-        bot.reply_to(message, "⚡ *Error:* You cannot kill the Creator / God! 🧘‍♂️")
-        return
-        
     if attacker_id == victim[0]:
         bot.reply_to(message, "❌ You cannot kill yourself!")
         return
 
-    # 👑 OWNER ULTIMATE ONE-HIT KILL BYPASS (God Power)
+    # 🧘‍♂️👑 OWNER ULTIMATE ANTI-KILL REVERSE MECHANISM (GOD WRATH)
+    if victim[0] == OWNER_ID:
+        # The foolish attacker who tried to kill the God/Owner dies instantly!
+        update_player(attacker_id, is_alive=0, has_armor=0)
+        bot.reply_to(message, f"⚡ *GOD'S WRATH:* *{attacker[1]}* foolishly tried to attack the Creator / God (*{victim[1]}*)! The attack backfired instantly, striking *{attacker[1]}* dead! 💀🪦")
+        return
+
+    # 👑 OWNER ATTACKING OTHERS: ULTIMATE ONE-HIT KILL BYPASS
     if attacker_id == OWNER_ID:
         update_player(victim[0], is_alive=0, has_armor=0)
         update_player(attacker_id, kills=attacker[4]+1, exp=attacker[3]+100)
         bot.reply_to(message, f"⚡ *GOD STRIKE:* Owner *{attacker[1]}* instantly annihilated *{victim[1]}*, bypassing all shields and armor! 💀 (+100 EXP)")
         return
 
-    # Normal player checks
+    # Normal player combat logic
     if attacker[5] == 0:
         bot.reply_to(message, "❌ You are dead! Use `/revive` first.")
         return
@@ -241,20 +300,32 @@ def rob_user(message):
         bot.reply_to(message, "❌ Who do you want to rob? Reply to their message.")
         return
         
+    if message.reply_to_message.from_user.is_bot:
+        bot.reply_to(message, "🤖 *Error:* You cannot rob a bot!")
+        return
+
+    robber_id = message.from_user.id
+    victim_id = message.reply_to_message.from_user.id
+    
+    # Anti-Rob Protection for Owner
+    if victim_id == OWNER_ID:
+        bot.reply_to(message, "⚡ *Error:* You cannot rob the Creator / God! Keep your hands off.")
+        return
+        
     args = message.text.split()
     if len(args) < 2 or not args[1].isdigit():
         bot.reply_to(message, "❌ Format: /rob [amount]")
         return
         
     amount = int(args[1])
-    robber = get_player(message.from_user.id, message.from_user.first_name)
-    victim = get_player(message.reply_to_message.from_user.id, message.reply_to_message.from_user.first_name)
+    robber = get_player(robber_id, message.from_user.first_name)
+    victim = get_player(victim_id, message.reply_to_message.from_user.first_name)
     
     if robber[5] == 0:
         bot.reply_to(message, "❌ Dead players cannot rob anyone!")
         return
         
-    if victim[0] != OWNER_ID and victim[2] < amount:
+    if victim[2] < amount:
         bot.reply_to(message, "❌ They don't have that many Z-Coins!")
         return
         
@@ -379,6 +450,9 @@ def join_bet(message):
 
 @bot.message_handler(func=lambda m: True)
 def check_word_winner(message):
+    if message.from_user.is_bot:
+        return
+
     conn = sqlite3.connect('game_bot.db')
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM word_games WHERE chat_id = ?", (message.chat.id,))
@@ -407,5 +481,5 @@ def check_word_winner(message):
 # --- 🚀 RUNNING THE BOT LOOP KEEP-ALIVE ---
 if __name__ == '__main__':
     init_db()
-    print("Davi Game Bot Started Successfully with Daily & God Mode Features...")
+    print("Davi Game Bot Started Successfully with PayCoin & Ultimate Owner Protection...")
     bot.infinity_polling()
