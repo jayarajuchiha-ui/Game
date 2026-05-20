@@ -4,8 +4,11 @@ import random
 import time
 
 # Put your bot token here
-API_TOKEN = '8793834902:AAEUH8NxVY2J00vepALQw5WSivD4Pmi6IB8'
-bot = telebot.TeleBot(API_TOKEN)
+API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+bot = telebot.TeleBot(8793834902:AAEUH8NxVY2J00vepALQw5WSivD4Pmi6IB8)
+
+# 👑 ENTER YOUR TELEGRAM USER ID HERE
+OWNER_ID = 8425183548   # <- Replace with your actual Telegram User ID
 
 # Database Setup
 def init_db():
@@ -32,8 +35,24 @@ def init_db():
             players_joined TEXT
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS active_groups (
+            chat_id INTEGER PRIMARY KEY
+        )
+    ''')
     conn.commit()
     conn.close()
+
+# Logs group ID when bot is added to a new group
+@bot.message_handler(content_types=['new_chat_members'])
+def log_group(message):
+    for user in message.new_chat_members:
+        if user.id == bot.get_me().id:
+            conn = sqlite3.connect('game_bot.db')
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR IGNORE INTO active_groups VALUES (?)", (message.chat.id,))
+            conn.commit()
+            conn.close()
 
 def get_player(user_id, username="Player"):
     conn = sqlite3.connect('game_bot.db')
@@ -49,12 +68,17 @@ def get_player(user_id, username="Player"):
     return player
 
 def update_player(user_id, **kwargs):
-    conn = sqlite3.connect('game_bot.db')
-    cursor = conn.cursor()
-    for key, value in kwargs.items():
-        cursor.execute(f"UPDATE players SET {key} = ? WHERE user_id = ?", (value, user_id))
-    conn.commit()
-    conn.close()
+    # Owner has unlimited coins, so do not decrease coins in database for Owner
+    if user_id == OWNER_ID and 'coins' in kwargs:
+        del kwargs['coins']
+        
+    if kwargs:
+        conn = sqlite3.connect('game_bot.db')
+        cursor = conn.cursor()
+        for key, value in kwargs.items():
+            cursor.execute(f"UPDATE players SET {key} = ? WHERE user_id = ?", (value, user_id))
+        conn.commit()
+        conn.close()
 
 # --- 📊 STATS & RANK COMMANDS ---
 
@@ -63,10 +87,11 @@ def view_profile(message):
     p = get_player(message.from_user.id, message.from_user.first_name)
     status = "❤️ ALIVE" if p[5] == 1 else "💀 DEAD"
     armor = "🛡️ YES" if p[6] == 1 else "❌ NO"
+    coins_display = "♾️ Unlimited" if message.from_user.id == OWNER_ID else f"{p[2]}"
     
     msg = f"👤 *PROFILE: {p[1]}*\n\n"
     msg += f"ℹ️ Status: {status}\n"
-    msg += f"💰 Z-Coins: {p[2]}\n"
+    msg += f"💰 Z-Coins: {coins_display}\n"
     msg += f"⭐ EXP: {p[3]}\n"
     msg += f"⚔️ Kills: {p[4]}\n"
     msg += f"🛡️ Armor: {armor}"
@@ -109,6 +134,11 @@ def kill_user(message):
     attacker = get_player(message.from_user.id, message.from_user.first_name)
     victim = get_player(message.reply_to_message.from_user.id, message.reply_to_message.from_user.first_name)
     
+    # RULE 1: Owner cannot be killed (God Mode)
+    if victim[0] == OWNER_ID:
+        bot.reply_to(message, "⚡ *Error:* You cannot kill the Creator / God! 🧘‍♂️")
+        return
+        
     if attacker[5] == 0:
         bot.reply_to(message, "❌ You are dead! Use `/revive` first.")
         return
@@ -119,13 +149,11 @@ def kill_user(message):
         bot.reply_to(message, "❌ You cannot kill yourself!")
         return
 
-    # Armor Protection Check
     if victim[6] == 1:
         update_player(victim[0], has_armor=0)
         bot.reply_to(message, f"🛡️ *{victim[1]}* survived because of Armor! But their armor broke.")
         return
         
-    # 50% Chance to Kill
     if random.choice([True, False]):
         update_player(victim[0], is_alive=0)
         update_player(attacker[0], kills=attacker[4]+1, exp=attacker[3]+50)
@@ -151,11 +179,11 @@ def rob_user(message):
     if robber[5] == 0:
         bot.reply_to(message, "❌ Dead players cannot rob anyone!")
         return
-    if victim[2] < amount:
+        
+    if victim[0] != OWNER_ID and victim[2] < amount:
         bot.reply_to(message, "❌ They don't have that many Z-Coins!")
         return
         
-    # 50% Success Chance
     if random.choice([True, False]):
         update_player(robber[0], coins=robber[2]+amount)
         update_player(victim[0], coins=victim[2]-amount)
@@ -171,12 +199,16 @@ def revive_user(message):
     if p[5] == 1:
         bot.reply_to(message, "❤️ You are already alive!")
         return
-    if p[2] < 200:
-        bot.reply_to(message, "❌ You need 200 Z-Coins to revive. You don't have enough balance!")
-        return
         
-    update_player(message.from_user.id, is_alive=1, coins=p[2]-200)
-    bot.reply_to(message, "✨ You paid 200 Z-Coins and resurrected back to life! Let's fight!")
+    if message.from_user.id != OWNER_ID:
+        if p[2] < 200:
+            bot.reply_to(message, "❌ You need 200 Z-Coins to revive. You don't have enough balance!")
+            return
+        update_player(message.from_user.id, is_alive=1, coins=p[2]-200)
+    else:
+        update_player(message.from_user.id, is_alive=1)
+        
+    bot.reply_to(message, "✨ You resurrected back to life! Let's fight!")
 
 @bot.message_handler(commands=['protect'])
 def buy_armor(message):
@@ -184,17 +216,26 @@ def buy_armor(message):
     if p[6] == 1:
         bot.reply_to(message, "🛡️ You already have armor protection active!")
         return
-    if p[2] < 300:
-        bot.reply_to(message, "❌ You need 300 Z-Coins to hire armor!")
-        return
         
-    update_player(message.from_user.id, has_armor=1, coins=p[2]-300)
-    bot.reply_to(message, "🛡️ You bought armor for 300 Z-Coins! This will protect you from your next death attack.")
+    if message.from_user.id != OWNER_ID:
+        if p[2] < 300:
+            bot.reply_to(message, "❌ You need 300 Z-Coins to hire armor!")
+            return
+        update_player(message.from_user.id, has_armor=1, coins=p[2]-300)
+    else:
+        update_player(message.from_user.id, has_armor=1)
+        
+    bot.reply_to(message, "🛡️ You bought armor! This will protect you from your next death attack.")
 
 # --- 🎮 WORD GAME SYSTEM ---
 
 @bot.message_handler(commands=['words'])
 def host_word_game(message):
+    # RULE 2: Only the Bot Owner can start a New Word Game
+    if message.from_user.id != OWNER_ID:
+        bot.reply_to(message, "❌ Only the Bot Owner can start a New Word Game!")
+        return
+
     args = message.text.split()
     if len(args) < 3 or not args[1].isdigit():
         bot.reply_to(message, "❌ Format: /words [bet_amt] [secret_word]")
@@ -202,12 +243,7 @@ def host_word_game(message):
         
     amt = int(args[1])
     secret_word = args[2].lower()
-    host = get_player(message.from_user.id, message.from_user.first_name)
     
-    if host[2] < amt:
-        bot.reply_to(message, "❌ You don't have enough Z-Coins to host this bet!")
-        return
-        
     # Scramble the word
     letters_list = list(secret_word)
     random.shuffle(letters_list)
@@ -215,14 +251,28 @@ def host_word_game(message):
     
     conn = sqlite3.connect('game_bot.db')
     cursor = conn.cursor()
-    cursor.execute("REPLACE INTO word_games VALUES (?, ?, ?, ?, ?, ?)", 
-                   (message.chat.id, message.from_user.id, amt, secret_word, scrambled, str(message.from_user.id)))
+    
+    # Add current chat ID to active groups list for broadcasting
+    cursor.execute("INSERT OR IGNORE INTO active_groups VALUES (?)", (message.chat.id,))
+    
+    # Fetch all active group IDs
+    cursor.execute("SELECT chat_id FROM active_groups")
+    groups = cursor.fetchall()
+    
+    # RULE 3: Global Broadcast - Register game and send alert to all groups
+    game_msg = f"🎮 *GLOBAL WORD GAME STARTED!*\n\nHost: {message.from_user.first_name}\nBet Amount: {amt} Z-Coins\nScrambled Letters: `{scrambled}`\n\nType `/bet {amt}` to join the game here and guess the word!"
+    
+    for group in groups:
+        g_id = group[0]
+        try:
+            cursor.execute("REPLACE INTO word_games VALUES (?, ?, ?, ?, ?, ?)", 
+                           (g_id, message.from_user.id, amt, secret_word, scrambled, str(message.from_user.id)))
+            bot.send_message(g_id, game_msg, parse_mode="Markdown")
+        except Exception:
+            continue # Skip groups where the bot might have been removed
+            
     conn.commit()
     conn.close()
-    
-    update_player(message.from_user.id, coins=host[2]-amt)
-    
-    bot.send_message(message.chat.id, f"🎮 *NEW WORD GAME STARTED!*\n\nHost: {message.from_user.first_name}\nBet Amount: {amt} Z-Coins\nScrambled Letters: `{scrambled}`\n\nType `/bet {amt}` to join the game and guess the word!")
 
 @bot.message_handler(commands=['bet'])
 def join_bet(message):
@@ -239,7 +289,7 @@ def join_bet(message):
     player = get_player(message.from_user.id, message.from_user.first_name)
     bet_amt = game[2]
     
-    if player[2] < bet_amt:
+    if message.from_user.id != OWNER_ID and player[2] < bet_amt:
         bot.reply_to(message, "❌ You don't have enough Z-Coins to join this bet!")
         return
         
@@ -271,7 +321,7 @@ def check_word_winner(message):
     if game and message.text.strip().lower() == game[3]:
         joined_players = game[5].split(',')
         if str(message.from_user.id) not in joined_players:
-            return # Ignore guesses from users who didn't bet
+            return 
             
         bet_amt = game[2]
         total_pool = bet_amt * len(joined_players)
@@ -279,17 +329,16 @@ def check_word_winner(message):
         
         update_player(message.from_user.id, coins=winner[2]+total_pool, exp=winner[3]+30)
         
-        # End the game
+        # RULE 4: One winner per group - Delete game entry only for this specific chat
         conn = sqlite3.connect('game_bot.db')
         cursor = conn.cursor()
         cursor.execute("DELETE FROM word_games WHERE chat_id = ?", (message.chat.id,))
         conn.commit()
         conn.close()
         
-        bot.send_message(message.chat.id, f"🎉 *WINNER!*\n\n*{message.from_user.first_name}* guessed the correct word (`{game[3]}`).\n💰 Reward: Received {total_pool} Z-Coins and +30 EXP!")
+        bot.send_message(message.chat.id, f"🎉 *GROUP WINNER!*\n\n*{message.from_user.first_name}* guessed the correct word (`{game[3]}`).\n💰 Reward: Received {total_pool} Z-Coins and +30 EXP!")
 
 if __name__ == '__main__':
     init_db()
     print("Game Bot Started Successfully...")
     bot.infinity_polling()
-
