@@ -4,12 +4,11 @@ import random
 import time
 from datetime import datetime, timedelta
 
-# Put your bot token here
-API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
-bot = telebot.TeleBot('8793834902:AAEUH8NxVY2J00vepALQw5WSivD4Pmi6IB8')
+# Importing credentials directly from your config.py
+from config import API_TOKEN, OWNER_ID
 
-# 👑 ENTER YOUR TELEGRAM USER ID HERE
-OWNER_ID = 8425183548   # <- Replace with your actual Telegram User ID
+# Using the existing bot instance configured via config
+bot = telebot.TeleBot(API_TOKEN)
 
 # Database Setup
 def init_db():
@@ -81,7 +80,7 @@ def update_player(user_id, **kwargs):
         conn.commit()
         conn.close()
 
-# --- 🎁 NEW: DAILY REWARD COMMAND (24h Cooldown) ---
+# --- 🎁 DAILY REWARD COMMAND (24h Cooldown) ---
 
 @bot.message_handler(commands=['daily'])
 def get_daily_reward(message):
@@ -405,7 +404,8 @@ def check_word_winner(message):
         
         bot.send_message(message.chat.id, f"🎉 *GROUP WINNER!*\n\n*{message.from_user.first_name}* guessed the correct word (`{game[3]}`).\n💰 Reward: Received {total_pool} Z-Coins and +30 EXP!")
 
-def start_game_module():
+# --- 🚀 RUNNING THE BOT LOOP KEEP-ALIVE ---
+if __name__ == '__main__':
     init_db()
-    print("Modular Game System Initialized with Daily & God Mode Features...")
-
+    print("Davi Game Bot Started Successfully with Daily & God Mode Features...")
+    bot.infinity_polling()
