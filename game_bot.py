@@ -78,7 +78,7 @@ def log_group_and_welcome(message):
         else:
             # Welcome new players only if the toggle is set to ON for this group
             if is_welcome_enabled(message.chat.id):
-                welcome_text = f"👋 *WELCOME TO THE GROUP, {user.first_name}!* HAVE FUN PLAYING AND STAY ALIVE! 🔥"
+                welcome_text = f"👋 *ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ ᴛʜᴇ ɢʀᴏᴜᴩ, {user.first_name}!* ᴛʜᴀɴᴋꜱ ꜰᴏʀ ᴊᴏɪɴ ᴏᴜʀ ɢʀᴏᴜᴩ! 🔥"
                 bot.send_message(message.chat.id, welcome_text.upper(), parse_mode="Markdown")
                 
     conn.close()
