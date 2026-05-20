@@ -5,7 +5,7 @@ import time
 
 # Put your bot token here
 API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
-bot = telebot.TeleBot(8793834902:AAEUH8NxVY2J00vepALQw5WSivD4Pmi6IB8)
+bot = telebot.TeleBot('8793834902:AAEUH8NxVY2J00vepALQw5WSivD4Pmi6IB8')
 
 # 👑 ENTER YOUR TELEGRAM USER ID HERE
 OWNER_ID = 8425183548   # <- Replace with your actual Telegram User ID
