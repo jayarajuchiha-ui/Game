@@ -262,7 +262,6 @@ def kill_user(message):
 
     # 🧘‍♂️👑 OWNER ULTIMATE ANTI-KILL REVERSE MECHANISM (GOD WRATH)
     if victim[0] == OWNER_ID:
-        # The foolish attacker who tried to kill the God/Owner dies instantly!
         update_player(attacker_id, is_alive=0, has_armor=0)
         bot.reply_to(message, f"⚡ *GOD'S WRATH:* *{attacker[1]}* foolishly tried to attack the Creator / God (*{victim[1]}*)! The attack backfired instantly, striking *{attacker[1]}* dead! 💀🪦")
         return
@@ -292,7 +291,15 @@ def kill_user(message):
         update_player(attacker_id, kills=attacker[4]+1, exp=attacker[3]+50)
         bot.reply_to(message, f"⚔️ *{attacker[1]}* hunted down and killed *{victim[1]}*! (+50 EXP)")
     else:
-        bot.reply_to(message, f"🏃 *{victim[1]}* managed to escape the attack!")
+        # தாக்குதலில் இருந்து தப்பிக்கும் போது அட்டாக்கருக்கு 100 காயின் ஃபைன் போடும் புதிய லாஜிக்:
+        if attacker_id != OWNER_ID:
+            new_attacker_coins = max(0, attacker[2] - 100)  # காயின் மைனஸில் போகாமல் தடுக்க max(0, ...)
+            update_player(attacker_id, coins=new_attacker_coins)
+            coin_msg = f" Also, you were injured during the attack and paid a *Hospital Bill* of `100` Z-Coins! (Remaining: `{new_attacker_coins}` Z-Coins)"
+        else:
+            coin_msg = ""
+            
+        bot.reply_to(message, f"🏃 *{victim[1]}* managed to escape the attack!{coin_msg}", parse_mode="Markdown")
 
 @bot.message_handler(commands=['rob'])
 def rob_user(message):
