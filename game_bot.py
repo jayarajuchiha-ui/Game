@@ -41,19 +41,85 @@ def init_db():
             chat_id INTEGER PRIMARY KEY
         )
     ''')
+    # New table added to track welcome configurations per group chat
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS welcome_settings (
+            chat_id INTEGER PRIMARY KEY,
+            welcome_enabled INTEGER DEFAULT 0
+        )
+    ''')
     conn.commit()
     conn.close()
 
-# Logs group ID when bot is added to a new group
+# Helper function to check if welcome message is enabled in a chat
+def is_welcome_enabled(chat_id):
+    conn = sqlite3.connect('game_bot.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT welcome_enabled FROM welcome_settings WHERE chat_id = ?", (chat_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row[0] == 1:
+        return True
+    return False
+
+# --- 🚀 WELCOME SYSTEM LOGIC ---
+
+# Automatically triggers when any new user joins the group chat
 @bot.message_handler(content_types=['new_chat_members'])
-def log_group(message):
+def log_group_and_welcome(message):
+    conn = sqlite3.connect('game_bot.db')
+    cursor = conn.cursor()
+    
     for user in message.new_chat_members:
+        # If the bot itself is added to a group, log the group ID
         if user.id == bot.get_me().id:
-            conn = sqlite3.connect('game_bot.db')
-            cursor = conn.cursor()
             cursor.execute("INSERT OR IGNORE INTO active_groups VALUES (?)", (message.chat.id,))
             conn.commit()
-            conn.close()
+        else:
+            # Welcome new players only if the toggle is set to ON for this group
+            if is_welcome_enabled(message.chat.id):
+                welcome_text = f"👋 *WELCOME TO THE GROUP, {user.first_name}!* HAVE FUN PLAYING AND STAY ALIVE! 🔥"
+                bot.send_message(message.chat.id, welcome_text.upper(), parse_mode="Markdown")
+                
+    conn.close()
+
+# Toggle Command: Turns ON the automated group greeting feature
+@bot.message_handler(commands=['welcomeon'])
+def turn_welcome_on(message):
+    # Restrict toggle command usage to group administrators or the bot owner
+    user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
+    if message.from_user.id != OWNER_ID and user_status not in ['administrator', 'creator']:
+        reply_msg = "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN ACTIVATE WELCOME MESSAGES!"
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    conn = sqlite3.connect('game_bot.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO welcome_settings (chat_id, welcome_enabled) VALUES (?, 1)", (message.chat.id,))
+    conn.commit()
+    conn.close()
+    
+    reply_msg = "✅ *SUCCESS:* AUTOMATED WELCOME MESSAGES HAVE BEEN ENABLED FOR THIS GROUP!"
+    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
+
+# Toggle Command: Turns OFF the automated group greeting feature
+@bot.message_handler(commands=['welcomeoff'])
+def turn_welcome_off(message):
+    user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
+    if message.from_user.id != OWNER_ID and user_status not in ['administrator', 'creator']:
+        reply_msg = "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN DEACTIVATE WELCOME MESSAGES!"
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    conn = sqlite3.connect('game_bot.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO welcome_settings (chat_id, welcome_enabled) VALUES (?, 0)", (message.chat.id,))
+    conn.commit()
+    conn.close()
+    
+    reply_msg = "❌ *DISABLED:* AUTOMATED WELCOME MESSAGES HAVE BEEN MUTED FOR THIS GROUP."
+    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
+
 
 def get_player(user_id, username="Player"):
     conn = sqlite3.connect('game_bot.db')
@@ -226,7 +292,6 @@ def view_profile(message):
     msg += f"⚔️ KILLS: {p[4]}\n"
     msg += f"🛡️ ARMOR: {armor}"
     
-    # Capitalizing final layout text output
     msg_upper = msg.upper()
     
     try:
