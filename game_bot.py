@@ -99,7 +99,8 @@ def get_daily_reward(message):
         hours, remainder = divmod(time_left.seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         
-        bot.reply_to(message, f"⏳ *Cooldown:* You already claimed your daily reward! Try again after `{hours}h {minutes}m {seconds}s`.")
+        reply_msg = f"⏳ *COOLDOWN:* YOU ALREADY CLAIMED YOUR DAILY REWARD! TRY AGAIN AFTER `{hours}H {minutes}M {seconds}S`."
+        bot.reply_to(message, reply_msg.upper())
         return
 
     # Add 100 coins and update timestamp
@@ -108,24 +109,28 @@ def get_daily_reward(message):
     
     update_player(user_id, coins=new_coins, last_daily=current_time_str)
     
-    coins_display = "♾️ Unlimited" if user_id == OWNER_ID else f"{new_coins}"
-    bot.reply_to(message, f"🎁 *DAILY REWARD:* You claimed your daily `100` Z-Coins!\nYour Current Balance: `{coins_display}` Z-Coins.")
+    coins_display = "INFINITY" if user_id == OWNER_ID else f"{new_coins}"
+    reply_msg = f"🎁 *DAILY REWARD:* YOU CLAIMED YOUR DAILY `100` Z-COINS!\nYOUR CURRENT BALANCE: `{coins_display}` Z-COINS."
+    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
 
 # --- 👑 OWNER MASTER COMMANDS ---
 
 @bot.message_handler(commands=['addcoins'])
 def add_coins_to_user(message):
     if message.from_user.id != OWNER_ID:
-        bot.reply_to(message, "❌ Only the Bot Owner can use this command!")
+        reply_msg = "❌ ONLY THE BOT OWNER CAN USE THIS COMMAND!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     if not message.reply_to_message:
-        bot.reply_to(message, "❌ Reply to someone's message with `/addcoins [amount]` to give them coins.")
+        reply_msg = "❌ REPLY TO SOMEONE'S MESSAGE WITH `/addcoins [amount]` TO GIVE THEM COINS."
+        bot.reply_to(message, reply_msg.upper())
         return
 
     args = message.text.split()
     if len(args) < 2 or not args[1].isdigit():
-        bot.reply_to(message, "❌ Format: `/addcoins [amount]`")
+        reply_msg = "❌ FORMAT: `/addcoins [amount]`"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     amount_to_add = int(args[1])
@@ -135,42 +140,49 @@ def add_coins_to_user(message):
     new_balance = player_data[2] + amount_to_add
     
     update_player(target_user.id, coins=new_balance)
-    bot.reply_to(message, f"💰 *SUCCESS:* Added `{amount_to_add}` Z-Coins to *{target_user.first_name}*'s account!\nNew Balance: `{new_balance}` Z-Coins.")
+    reply_msg = f"💰 *SUCCESS:* ADDED `{amount_to_add}` Z-COINS TO *{target_user.first_name}*'S ACCOUNT!\nNEW BALANCE: `{new_balance}` Z-COINS."
+    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
 
 # --- 💸 USER COIN TRANSFER SYSTEM ---
 
 @bot.message_handler(commands=['paycoin'])
 def pay_coin_to_user(message):
     if not message.reply_to_message:
-        bot.reply_to(message, "❌ Reply to someone's message with `/paycoin [amount]` to transfer coins.")
+        reply_msg = "❌ REPLY TO SOMEONE'S MESSAGE WITH `/paycoin [amount]` TO TRANSFER COINS."
+        bot.reply_to(message, reply_msg.upper())
         return
 
     if message.reply_to_message.from_user.is_bot:
-        bot.reply_to(message, "🤖 *Error:* You cannot transfer coins to a bot!")
+        reply_msg = "🤖 *ERROR:* YOU CANNOT TRANSFER COINS TO A BOT!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     sender_id = message.from_user.id
     receiver_id = message.reply_to_message.from_user.id
 
     if sender_id == receiver_id:
-        bot.reply_to(message, "❌ You cannot transfer coins to yourself!")
+        reply_msg = "❌ YOU CANNOT TRANSFER COINS TO YOURSELF!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     args = message.text.split()
     if len(args) < 2 or not args[1].isdigit():
-        bot.reply_to(message, "❌ Format: `/paycoin [amount]` (Example: `/paycoin 100`)")
+        reply_msg = "❌ FORMAT: `/paycoin [amount]` (EXAMPLE: `/paycoin 100`)"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     amount_to_pay = int(args[1])
     if amount_to_pay <= 0:
-        bot.reply_to(message, "❌ Amount must be greater than 0!")
+        reply_msg = "❌ AMOUNT MUST BE GREATER THAN 0!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     sender = get_player(sender_id, message.from_user.first_name)
     receiver = get_player(receiver_id, message.reply_to_message.from_user.first_name)
 
     if sender_id != OWNER_ID and sender[2] < amount_to_pay:
-        bot.reply_to(message, f"❌ Transaction Failed! You don't have enough balance. Your balance: `{sender[2]}` Z-Coins.")
+        reply_msg = f"❌ TRANSACTION FAILED! YOU DON'T HAVE ENOUGH BALANCE. YOUR BALANCE: `{sender[2]}` Z-COINS."
+        bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
         return
 
     if sender_id != OWNER_ID:
@@ -178,41 +190,54 @@ def pay_coin_to_user(message):
         
     update_player(receiver_id, coins=receiver[2] + amount_to_pay)
 
-    sender_bal = "♾️ Unlimited" if sender_id == OWNER_ID else f"{sender[2] - amount_to_pay}"
+    sender_bal = "INFINITY" if sender_id == OWNER_ID else f"{sender[2] - amount_to_pay}"
     receiver_bal = f"{receiver[2] + amount_to_pay}"
 
     success_msg = f"💸 *TRANSACTION SUCCESSFUL!*\n\n"
-    success_msg += f"👤 *From:* {sender[1]}\n"
-    success_msg += f"👤 *To:* {receiver[1]}\n"
-    success_msg += f"💰 *Amount Sent:* `{amount_to_pay}` Z-Coins\n\n"
-    success_msg += f"📊 *New Balances:*\n"
-    success_msg += f"• {sender[1]}: `{sender_bal}` Z-Coins\n"
-    success_msg += f"• {receiver[1]}: `{receiver_bal}` Z-Coins"
+    success_msg += f"👤 *FROM:* {sender[1]}\n"
+    success_msg += f"👤 *TO:* {receiver[1]}\n"
+    success_msg += f"💰 *AMOUNT SENT:* `{amount_to_pay}` Z-COINS\n\n"
+    success_msg += f"📊 *NEW BALANCES:*\n"
+    success_msg += f"• {sender[1]}: `{sender_bal}` Z-COINS\n"
+    success_msg += f"• {receiver[1]}: `{receiver_bal}` Z-COINS"
 
-    bot.reply_to(message, success_msg, parse_mode="Markdown")
+    bot.reply_to(message, success_msg.upper(), parse_mode="Markdown")
 
 # --- 📊 STATS & RANK COMMANDS ---
 
 @bot.message_handler(commands=['bal'])
 def view_profile(message):
-    p = get_player(message.from_user.id, message.from_user.first_name)
+    user_id = message.from_user.id
+    p = get_player(user_id, message.from_user.first_name)
     
-    if message.from_user.id == OWNER_ID:
-        status = "🧘 God Mode"
-        coins_display = "♾️ Unlimited"
+    if user_id == OWNER_ID:
+        status = "GOD MODE"
+        coins_display = "INFINITY"
     else:
-        status = "❤️ ALIVE" if p[5] == 1 else "💀 DEAD"
+        status = "ALIVE" if p[5] == 1 else "DEAD"
         coins_display = f"{p[2]}"
         
-    armor = "🛡️ YES" if p[6] == 1 else "❌ NO"
+    armor = "YES" if p[6] == 1 else "NO"
     
     msg = f"👤 *PROFILE: {p[1]}*\n\n"
-    msg += f"ℹ️ Status: {status}\n"
-    msg += f"💰 Z-Coins: {coins_display}\n"
+    msg += f"ℹ️ STATUS: {status}\n"
+    msg += f"💰 Z-COINS: {coins_display}\n"
     msg += f"⭐ EXP: {p[3]}\n"
-    msg += f"⚔️ Kills: {p[4]}\n"
-    msg += f"🛡️ Armor: {armor}"
-    bot.reply_to(message, msg, parse_mode="Markdown")
+    msg += f"⚔️ KILLS: {p[4]}\n"
+    msg += f"🛡️ ARMOR: {armor}"
+    
+    # Capitalizing final layout text output
+    msg_upper = msg.upper()
+    
+    try:
+        user_photos = bot.get_user_profile_photos(user_id)
+        if user_photos.total_count > 0:
+            photo_id = user_photos.photos[0][-1].file_id
+            bot.send_photo(message.chat.id, photo_id, caption=msg_upper, parse_mode="Markdown")
+        else:
+            bot.reply_to(message, msg_upper, parse_mode="Markdown")
+    except Exception:
+        bot.reply_to(message, msg_upper, parse_mode="Markdown")
 
 @bot.message_handler(commands=['topkills'])
 def top_kills(message):
@@ -224,8 +249,8 @@ def top_kills(message):
     
     msg = "💀 *DEADLIEST PLAYERS*\n\n"
     for i, row in enumerate(rows, 1):
-        msg += f"{i}. {row[0]} - {row[1]} kills\n"
-    bot.reply_to(message, msg, parse_mode="Markdown")
+        msg += f"{i}. {row[0]} - {row[1]} KILLS\n"
+    bot.reply_to(message, msg.upper(), parse_mode="Markdown")
 
 @bot.message_handler(commands=['rankers'])
 def global_rankers(message):
@@ -238,18 +263,20 @@ def global_rankers(message):
     msg = "⭐ *GLOBAL EXP RANKINGS*\n\n"
     for i, row in enumerate(rows, 1):
         msg += f"{i}. {row[0]} - {row[1]} EXP\n"
-    bot.reply_to(message, msg, parse_mode="Markdown")
+    bot.reply_to(message, msg.upper(), parse_mode="Markdown")
 
 # --- ⚔️ COMBAT COMMANDS ---
 
 @bot.message_handler(commands=['kill'])
 def kill_user(message):
     if not message.reply_to_message:
-        bot.reply_to(message, "❌ Who do you want to kill? Reply to their message with this command.")
+        reply_msg = "❌ WHO DO YOU WANT TO KILL? REPLY TO THEIR MESSAGE WITH THIS COMMAND."
+        bot.reply_to(message, reply_msg.upper())
         return
         
     if message.reply_to_message.from_user.is_bot:
-        bot.reply_to(message, "🤖 *Error:* Bots cannot participate in combat! You can only attack real users.")
+        reply_msg = "🤖 *ERROR:* BOTS CANNOT PARTICIPATE IN COMBAT! YOU CAN ONLY ATTACK REAL USERS."
+        bot.reply_to(message, reply_msg.upper())
         return
 
     attacker_id = message.from_user.id
@@ -257,58 +284,67 @@ def kill_user(message):
     victim = get_player(message.reply_to_message.from_user.id, message.reply_to_message.from_user.first_name)
     
     if attacker_id == victim[0]:
-        bot.reply_to(message, "❌ You cannot kill yourself!")
+        reply_msg = "❌ YOU CANNOT KILL YOURSELF!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     # 🧘‍♂️👑 OWNER ULTIMATE ANTI-KILL REVERSE MECHANISM (GOD WRATH)
     if victim[0] == OWNER_ID:
         update_player(attacker_id, is_alive=0, has_armor=0)
-        bot.reply_to(message, f"⚡ *GOD'S WRATH:* *{attacker[1]}* foolishly tried to attack the Creator / God (*{victim[1]}*)! The attack backfired instantly, striking *{attacker[1]}* dead! 💀🪦")
+        reply_msg = f"⚡ *GOD'S WRATH:* *{attacker[1]}* FOOLISHLY TRIED TO ATTACK THE CREATOR / GOD (*{victim[1]}*)! THE ATTACK BACKFIRED INSTANTLY, STRIKING *{attacker[1]}* DEAD! 💀🪦"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     # 👑 OWNER ATTACKING OTHERS: ULTIMATE ONE-HIT KILL BYPASS
     if attacker_id == OWNER_ID:
         update_player(victim[0], is_alive=0, has_armor=0)
         update_player(attacker_id, kills=attacker[4]+1, exp=attacker[3]+100)
-        bot.reply_to(message, f"⚡ *GOD STRIKE:* Owner *{attacker[1]}* instantly annihilated *{victim[1]}*, bypassing all shields and armor! 💀 (+100 EXP)")
+        reply_msg = f"⚡ *GOD STRIKE:* OWNER *{attacker[1]}* INSTANTLY ANNIHILATED *{victim[1]}*, BYPASSING ALL SHIELDS AND ARMOR! 💀 (+100 EXP)"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     # Normal player combat logic
     if attacker[5] == 0:
-        bot.reply_to(message, "❌ You are dead! Use `/revive` first.")
+        reply_msg = "❌ YOU ARE DEAD! USE `/REVIVE` FIRST."
+        bot.reply_to(message, reply_msg.upper())
         return
     if victim[5] == 0:
-        bot.reply_to(message, "❌ They are already dead!")
+        reply_msg = "❌ THEY ARE ALREADY DEAD!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     if victim[6] == 1:
         update_player(victim[0], has_armor=0)
-        bot.reply_to(message, f"🛡️ *{victim[1]}* survived because of Armor! But their armor broke.")
+        reply_msg = f"🛡️ *{victim[1]}* SURVIVED BECAUSE OF ARMOR! BUT THEIR ARMOR BROKE."
+        bot.reply_to(message, reply_msg.upper())
         return
         
     if random.choice([True, False]):
         update_player(victim[0], is_alive=0)
         update_player(attacker_id, kills=attacker[4]+1, exp=attacker[3]+50)
-        bot.reply_to(message, f"⚔️ *{attacker[1]}* hunted down and killed *{victim[1]}*! (+50 EXP)")
+        reply_msg = f"⚔️ *{attacker[1]}* HUNTED DOWN AND KILLED *{victim[1]}*! (+50 EXP)"
+        bot.reply_to(message, reply_msg.upper())
     else:
-        # தாக்குதலில் இருந்து தப்பிக்கும் போது அட்டாக்கருக்கு 100 காயின் ஃபைன் போடும் புதிய லாஜிக்:
         if attacker_id != OWNER_ID:
-            new_attacker_coins = max(0, attacker[2] - 100)  # காயின் மைனஸில் போகாமல் தடுக்க max(0, ...)
+            new_attacker_coins = max(0, attacker[2] - 100)
             update_player(attacker_id, coins=new_attacker_coins)
-            coin_msg = f" Also, you were injured during the attack and paid a *Hospital Bill* of `100` Z-Coins! (Remaining: `{new_attacker_coins}` Z-Coins)"
+            coin_msg = f" ALSO, YOU WERE INJURED DURING THE ATTACK AND PAID A *HOSPITAL BILL* OF `100` Z-COINS! (REMAINING: `{new_attacker_coins}` Z-COINS)"
         else:
             coin_msg = ""
             
-        bot.reply_to(message, f"🏃 *{victim[1]}* managed to escape the attack!{coin_msg}", parse_mode="Markdown")
+        reply_msg = f"🏃 *{victim[1]}* MANAGED TO ESCAPE THE ATTACK!{coin_msg}"
+        bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
 
 @bot.message_handler(commands=['rob'])
 def rob_user(message):
     if not message.reply_to_message:
-        bot.reply_to(message, "❌ Who do you want to rob? Reply to their message.")
+        reply_msg = "❌ WHO DO YOU WANT TO ROB? REPLY TO THEIR MESSAGE."
+        bot.reply_to(message, reply_msg.upper())
         return
         
     if message.reply_to_message.from_user.is_bot:
-        bot.reply_to(message, "🤖 *Error:* You cannot rob a bot!")
+        reply_msg = "🤖 *ERROR:* YOU CANNOT ROB A BOT!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     robber_id = message.from_user.id
@@ -316,12 +352,14 @@ def rob_user(message):
     
     # Anti-Rob Protection for Owner
     if victim_id == OWNER_ID:
-        bot.reply_to(message, "⚡ *Error:* You cannot rob the Creator / God! Keep your hands off.")
+        reply_msg = "⚡ *ERROR:* YOU CANNOT ROB THE CREATOR / GOD! KEEP YOUR HANDS OFF."
+        bot.reply_to(message, reply_msg.upper())
         return
         
     args = message.text.split()
     if len(args) < 2 or not args[1].isdigit():
-        bot.reply_to(message, "❌ Format: /rob [amount]")
+        reply_msg = "❌ FORMAT: /ROB [AMOUNT]"
+        bot.reply_to(message, reply_msg.upper())
         return
         
     amount = int(args[1])
@@ -329,67 +367,85 @@ def rob_user(message):
     victim = get_player(victim_id, message.reply_to_message.from_user.first_name)
     
     if robber[5] == 0:
-        bot.reply_to(message, "❌ Dead players cannot rob anyone!")
+        reply_msg = "❌ DEAD PLAYERS CANNOT ROB ANYONE!"
+        bot.reply_to(message, reply_msg.upper())
         return
         
     if victim[2] < amount:
-        bot.reply_to(message, "❌ They don't have that many Z-Coins!")
+        reply_msg = "❌ THEY DON'T HAVE THAT MANY Z-COINS!"
+        bot.reply_to(message, reply_msg.upper())
         return
         
     if random.choice([True, False]):
         update_player(robber[0], coins=robber[2]+amount)
         update_player(victim[0], coins=victim[2]-amount)
-        bot.reply_to(message, f"💰 *{robber[1]}* successfully robbed {amount} Z-Coins from *{victim[1]}*!")
+        reply_msg = f"💰 *{robber[1]}* SUCCESSFULLY ROBBED {amount} Z-COINS FROM *{victim[1]}*!"
+        bot.reply_to(message, reply_msg.upper())
     else:
         penalty = int(amount * 0.5)
         update_player(robber[0], coins=max(0, robber[2]-penalty))
-        bot.reply_to(message, f"👮 *{robber[1]}* got caught while robbing! Fined {penalty} Z-Coins.")
+        reply_msg = f"👮 *{robber[1]}* GOT CAUGHT WHILE ROBBING! FINED {penalty} Z-COINS."
+        bot.reply_to(message, reply_msg.upper())
 
 @bot.message_handler(commands=['revive'])
 def revive_user(message):
-    p = get_player(message.from_user.id, message.from_user.first_name)
+    user_id = message.from_user.id
+    p = get_player(user_id, message.from_user.first_name)
+    
     if p[5] == 1:
-        bot.reply_to(message, "❤️ You are already alive!")
+        reply_msg = "❤️ YOU ARE ALREADY ALIVE!"
+        bot.reply_to(message, reply_msg.upper())
         return
         
-    if message.from_user.id != OWNER_ID:
+    if user_id != OWNER_ID:
         if p[2] < 200:
-            bot.reply_to(message, "❌ You need 200 Z-Coins to revive. You don't have enough balance!")
+            reply_msg = "❌ *REVIVE FAILED!* YOU NEED AT LEAST `200` Z-COINS TO PAY THE REVIVE BILL. ASK ANOTHER PLAYER TO SEND YOU COINS USING `/PAYCOIN`!"
+            bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
             return
-        update_player(message.from_user.id, is_alive=1, coins=p[2]-200)
-    else:
-        update_player(message.from_user.id, is_alive=1)
         
-    bot.reply_to(message, "✨ You resurrected back to life! Let's fight!")
+        new_coins = p[2] - 200
+        update_player(user_id, is_alive=1, coins=new_coins)
+        reply_msg = f"✨ *RESURRECTED!* YOU PAID A *REVIVE BILL* OF `200` Z-COINS AND RETURNED TO LIFE! LET'S FIGHT!\nREMAINING BALANCE: `{new_coins}` Z-COINS."
+        bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
+    
+    else:
+        update_player(user_id, is_alive=1)
+        reply_msg = "🧘 *GOD MODE REVIVE:* OWNER RESURRECTED BACK TO LIFE INSTANTLY WITHOUT ANY COST!"
+        bot.reply_to(message, reply_msg.upper())
 
 @bot.message_handler(commands=['protect'])
 def buy_armor(message):
     p = get_player(message.from_user.id, message.from_user.first_name)
     if p[6] == 1:
-        bot.reply_to(message, "🛡️ You already have armor protection active!")
+        reply_msg = "🛡️ YOU ALREADY HAVE ARMOR PROTECTION ACTIVE!"
+        bot.reply_to(message, reply_msg.upper())
         return
         
     if message.from_user.id != OWNER_ID:
         if p[2] < 300:
-            bot.reply_to(message, "❌ You need 300 Z-Coins to hire armor!")
+            reply_msg = "❌ YOU NEED 300 Z-COINS TO HIRE ARMOR!"
+            bot.reply_to(message, reply_msg.upper())
             return
         update_player(message.from_user.id, has_armor=1, coins=p[2]-300)
     else:
         update_player(message.from_user.id, has_armor=1)
         
-    bot.reply_to(message, "🛡️ You bought armor! This will protect you from your next death attack.")
+    reply_msg = "🛡️ YOU BOUGHT ARMOR! THIS WILL PROTECT YOU FROM YOUR NEXT DEATH ATTACK."
+    bot.reply_to(message, reply_msg.upper())
 
 # --- 🎮 WORD GAME SYSTEM ---
 
 @bot.message_handler(commands=['words'])
 def host_word_game(message):
     if message.from_user.id != OWNER_ID:
-        bot.reply_to(message, "❌ Only the Bot Owner can start a New Word Game!")
+        reply_msg = "❌ ONLY THE BOT OWNER CAN START A NEW WORD GAME!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     args = message.text.split()
     if len(args) < 3 or not args[1].isdigit():
-        bot.reply_to(message, "❌ Format: /words [bet_amt] [secret_word]")
+        reply_msg = "❌ FORMAT: /WORDS [BET_AMT] [SECRET_WORD]"
+        bot.reply_to(message, reply_msg.upper())
         return
         
     amt = int(args[1])
@@ -405,14 +461,14 @@ def host_word_game(message):
     cursor.execute("SELECT chat_id FROM active_groups")
     groups = cursor.fetchall()
     
-    game_msg = f"🎮 *GLOBAL WORD GAME STARTED!*\n\nHost: {message.from_user.first_name}\nBet Amount: {amt} Z-Coins\nScrambled Letters: `{scrambled}`\n\nType `/bet {amt}` to join the game here and guess the word!"
+    game_msg = f"🎮 *GLOBAL WORD GAME STARTED!*\n\nHOST: {message.from_user.first_name}\nBET AMOUNT: {amt} Z-COINS\nSCRAMBLED LETTERS: `{scrambled}`\n\nTYPE `/BET {amt}` TO JOIN THE GAME HERE AND GUESS THE WORD!"
     
     for group in groups:
         g_id = group[0]
         try:
             cursor.execute("REPLACE INTO word_games VALUES (?, ?, ?, ?, ?, ?)", 
                            (g_id, message.from_user.id, amt, secret_word, scrambled, str(message.from_user.id)))
-            bot.send_message(g_id, game_msg, parse_mode="Markdown")
+            bot.send_message(g_id, game_msg.upper(), parse_mode="Markdown")
         except Exception:
             continue
             
@@ -428,19 +484,22 @@ def join_bet(message):
     conn.close()
     
     if not game:
-        bot.reply_to(message, "❌ No active word game running in this group.")
+        reply_msg = "❌ NO ACTIVE WORD GAME RUNNING IN THIS GROUP."
+        bot.reply_to(message, reply_msg.upper())
         return
         
     player = get_player(message.from_user.id, message.from_user.first_name)
     bet_amt = game[2]
     
     if message.from_user.id != OWNER_ID and player[2] < bet_amt:
-        bot.reply_to(message, "❌ You don't have enough Z-Coins to join this bet!")
+        reply_msg = "❌ YOU DON'T HAVE ENOUGH Z-COINS TO JOIN THIS BET!"
+        bot.reply_to(message, reply_msg.upper())
         return
         
     joined_players = game[5].split(',')
     if str(message.from_user.id) in joined_players:
-        bot.reply_to(message, "❌ You have already joined this game! Try to solve the word.")
+        reply_msg = "❌ YOU HAVE ALREADY JOINED THIS GAME! TRY TO SOLVE THE WORD."
+        bot.reply_to(message, reply_msg.upper())
         return
         
     joined_players.append(str(message.from_user.id))
@@ -453,7 +512,8 @@ def join_bet(message):
     conn.close()
     
     update_player(message.from_user.id, coins=player[2]-bet_amt)
-    bot.reply_to(message, f"✅ You joined the game for {bet_amt} Z-Coins! Guess the word and type it in chat.")
+    reply_msg = f"✅ YOU JOINED THE GAME FOR {bet_amt} Z-COINS! GUESS THE WORD AND TYPE IT IN CHAT."
+    bot.reply_to(message, reply_msg.upper())
 
 @bot.message_handler(func=lambda m: True)
 def check_word_winner(message):
@@ -483,7 +543,8 @@ def check_word_winner(message):
         conn.commit()
         conn.close()
         
-        bot.send_message(message.chat.id, f"🎉 *GROUP WINNER!*\n\n*{message.from_user.first_name}* guessed the correct word (`{game[3]}`).\n💰 Reward: Received {total_pool} Z-Coins and +30 EXP!")
+        win_msg = f"🎉 *GROUP WINNER!*\n\n*{message.from_user.first_name}* GUESSED THE CORRECT WORD (`{game[3]}`).\n💰 REWARD: RECEIVED {total_pool} Z-COINS AND +30 EXP!"
+        bot.send_message(message.chat.id, win_msg.upper(), parse_mode="Markdown")
 
 # --- 🚀 RUNNING THE BOT LOOP KEEP-ALIVE ---
 if __name__ == '__main__':
