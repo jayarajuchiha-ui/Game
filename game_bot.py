@@ -5,10 +5,10 @@ import time
 from datetime import datetime, timedelta
 
 # Importing credentials directly from your config.py
-from config import API_TOKEN, OWNER_ID
+from config import BOT_TOKEN, OWNER_ID
 
 # Using the existing bot instance configured via config
-bot = telebot.TeleBot(API_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN)
 
 # Database Setup
 def init_db():
@@ -41,15 +41,31 @@ def init_db():
             chat_id INTEGER PRIMARY KEY
         )
     ''')
-    # New table added to track welcome configurations per group chat
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS welcome_settings (
             chat_id INTEGER PRIMARY KEY,
             welcome_enabled INTEGER DEFAULT 0
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS request_settings (
+            chat_id INTEGER PRIMARY KEY,
+            request_enabled INTEGER DEFAULT 0
+        )
+    ''')
     conn.commit()
     conn.close()
+
+# Helper function to check if Auto Request Accept is enabled in a chat
+def is_request_enabled(chat_id):
+    conn = sqlite3.connect('game_bot.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT request_enabled FROM request_settings WHERE chat_id = ?", (chat_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row[0] == 1:
+        return True
+    return False
 
 # Helper function to check if welcome message is enabled in a chat
 def is_welcome_enabled(chat_id):
@@ -62,31 +78,144 @@ def is_welcome_enabled(chat_id):
         return True
     return False
 
-# --- 🚀 WELCOME SYSTEM LOGIC ---
 
-# Automatically triggers when any new user joins the group chat
+# --- 📝 OWNER DM LOGGING FUNCTIONS ---
+
+def log_new_user_to_owner(user):
+    try:
+        username_val = f"@{user.username}" if user.username else "NO USERNAME"
+        log_text = (
+            "👤 *NEW USER STARTED THE BOT*\n\n"
+            f"• NAME: {user.first_name}\n"
+            f"• USER ID: `{user.id}`\n"
+            f"• USERNAME: {username_val}"
+        )
+        bot.send_message(OWNER_ID, log_text.upper(), parse_mode="Markdown")
+    except Exception:
+        pass
+
+def log_new_group_to_owner(chat):
+    try:
+        # Try to get or generate an invite link if the bot has admin rights
+        try:
+            group_link = chat.invite_link
+            if not group_link:
+                group_link = bot.export_chat_invite_link(chat.id)
+        except Exception:
+            group_link = "NOT AN ADMIN / NO PERMISSION TO GET LINK"
+
+        log_text = (
+            "📥 *BOT ADDED TO NEW GROUP*\n\n"
+            f"• GROUP NAME: {chat.title}\n"
+            f"• GROUP ID: `{chat.id}`\n"
+            f"• LINK: {group_link}"
+        )
+        bot.send_message(OWNER_ID, log_text.upper(), parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+# --- 🎯 START COMMAND TRACKING ---
+
+@bot.message_handler(commands=['start'])
+def handle_start(message):
+    # Only track if it's a private chat
+    if message.chat.type == 'private':
+        user_id = message.from_user.id
+        
+        # Check if user is already in db before running get_player to find if they are new
+        conn = sqlite3.connect('game_bot.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM players WHERE user_id = ?", (user_id,))
+        exists = cursor.fetchone()
+        conn.close()
+        
+        # Initialize/fetch player structure
+        get_player(user_id, message.from_user.first_name)
+        
+        # If the user didn't exist in the database, fire the owner DM log
+        if not exists:
+            log_new_user_to_owner(message.from_user)
+            
+        welcome_reply = f"👋 HELLO {message.from_user.first_name}! WELCOME TO THE GAME BOT. TYPE /BAL TO CHECK YOUR PROFILE!"
+        bot.reply_to(message, welcome_reply.upper())
+
+
+# --- 🎯 AUTO JOIN REQUEST HANDLER ---
+
+@bot.chat_join_request_handler(func=lambda request: True)
+def auto_accept_requests(request):
+    chat_id = request.chat.id
+    user_id = request.from_user.id
+    user_name = request.from_user.first_name
+    
+    if is_request_enabled(chat_id):
+        try:
+            bot.approve_chat_join_request(chat_id, user_id)
+            notification = f"✅ *AUTO ACCEPT:* APPROVED JOIN REQUEST FOR {user_name}! WELCOME TO THE ARENA! ⚔️"
+            bot.send_message(chat_id, notification.upper(), parse_mode="Markdown")
+        except Exception:
+            pass
+
+
+# --- 🚀 WELCOME & REQUEST TOGGLE COMMANDS ---
+
+@bot.message_handler(commands=['requeston'])
+def turn_request_on(message):
+    user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
+    if message.from_user.id != OWNER_ID and user_status not in ['administrator', 'creator']:
+        reply_msg = "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN ACTIVATE AUTO REQUEST ACCEPTS!"
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    conn = sqlite3.connect('game_bot.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO request_settings (chat_id, request_enabled) VALUES (?, 1)", (message.chat.id,))
+    conn.commit()
+    conn.close()
+    
+    reply_msg = "✅ *SUCCESS:* AUTO JOIN REQUEST ACCEPTANCE HAS BEEN ENABLED FOR THIS GROUP!"
+    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
+
+@bot.message_handler(commands=['requestoff'])
+def turn_request_off(message):
+    user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
+    if message.from_user.id != OWNER_ID and user_status not in ['administrator', 'creator']:
+        reply_msg = "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN DEACTIVATE AUTO REQUEST ACCEPTS!"
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    conn = sqlite3.connect('game_bot.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO request_settings (chat_id, request_enabled) VALUES (?, 0)", (message.chat.id,))
+    conn.commit()
+    conn.close()
+    
+    reply_msg = "❌ *DISABLED:* AUTOMATIC JOIN REQUEST APPROVALS HAVE BEEN MUTED."
+    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
+
+
 @bot.message_handler(content_types=['new_chat_members'])
 def log_group_and_welcome(message):
     conn = sqlite3.connect('game_bot.db')
     cursor = conn.cursor()
     
     for user in message.new_chat_members:
-        # If the bot itself is added to a group, log the group ID
+        # If the bot itself is added to a group
         if user.id == bot.get_me().id:
             cursor.execute("INSERT OR IGNORE INTO active_groups VALUES (?)", (message.chat.id,))
             conn.commit()
+            # Send Group Details directly to Owner DM
+            log_new_group_to_owner(message.chat)
         else:
-            # Welcome new players only if the toggle is set to ON for this group
             if is_welcome_enabled(message.chat.id):
-                welcome_text = f"👋 *ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ ᴛʜᴇ ɢʀᴏᴜᴩ, {user.first_name}!* ᴛʜᴀɴᴋꜱ ꜰᴏʀ ᴊᴏɪɴ ᴏᴜʀ ɢʀᴏᴜᴩ! 🔥"
+                welcome_text = f"👋 *WELCOME TO THE GROUP, {user.first_name}!* HAVE FUN PLAYING AND STAY ALIVE! 🔥"
                 bot.send_message(message.chat.id, welcome_text.upper(), parse_mode="Markdown")
                 
     conn.close()
 
-# Toggle Command: Turns ON the automated group greeting feature
 @bot.message_handler(commands=['welcomeon'])
 def turn_welcome_on(message):
-    # Restrict toggle command usage to group administrators or the bot owner
     user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
     if message.from_user.id != OWNER_ID and user_status not in ['administrator', 'creator']:
         reply_msg = "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN ACTIVATE WELCOME MESSAGES!"
@@ -102,7 +231,6 @@ def turn_welcome_on(message):
     reply_msg = "✅ *SUCCESS:* AUTOMATED WELCOME MESSAGES HAVE BEEN ENABLED FOR THIS GROUP!"
     bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
 
-# Toggle Command: Turns OFF the automated group greeting feature
 @bot.message_handler(commands=['welcomeoff'])
 def turn_welcome_off(message):
     user_status = bot.get_chat_member(message.chat.id, message.from_user.id).status
@@ -153,7 +281,6 @@ def get_daily_reward(message):
     user_id = message.from_user.id
     player = get_player(user_id, message.from_user.first_name)
     
-    # Check 24 hours cooldown
     last_daily_str = player[7] if player[7] else "2000-01-01 00:00:00"
     last_daily_time = datetime.strptime(last_daily_str, "%Y-%m-%d %H:%M:%S")
     
@@ -169,7 +296,6 @@ def get_daily_reward(message):
         bot.reply_to(message, reply_msg.upper())
         return
 
-    # Add 100 coins and update timestamp
     new_coins = player[2] + 100
     current_time_str = current_time.strftime("%Y-%m-%d %H:%M:%S")
     
@@ -353,14 +479,12 @@ def kill_user(message):
         bot.reply_to(message, reply_msg.upper())
         return
 
-    # 🧘‍♂️👑 OWNER ULTIMATE ANTI-KILL REVERSE MECHANISM (GOD WRATH)
     if victim[0] == OWNER_ID:
         update_player(attacker_id, is_alive=0, has_armor=0)
         reply_msg = f"⚡ *GOD'S WRATH:* *{attacker[1]}* FOOLISHLY TRIED TO ATTACK THE CREATOR / GOD (*{victim[1]}*)! THE ATTACK BACKFIRED INSTANTLY, STRIKING *{attacker[1]}* DEAD! 💀🪦"
         bot.reply_to(message, reply_msg.upper())
         return
 
-    # 👑 OWNER ATTACKING OTHERS: ULTIMATE ONE-HIT KILL BYPASS
     if attacker_id == OWNER_ID:
         update_player(victim[0], is_alive=0, has_armor=0)
         update_player(attacker_id, kills=attacker[4]+1, exp=attacker[3]+100)
@@ -368,7 +492,6 @@ def kill_user(message):
         bot.reply_to(message, reply_msg.upper())
         return
 
-    # Normal player combat logic
     if attacker[5] == 0:
         reply_msg = "❌ YOU ARE DEAD! USE `/REVIVE` FIRST."
         bot.reply_to(message, reply_msg.upper())
@@ -386,8 +509,8 @@ def kill_user(message):
         
     if random.choice([True, False]):
         update_player(victim[0], is_alive=0)
-        update_player(attacker_id, kills=attacker[4]+1, exp=attacker[3]+50)
-        reply_msg = f"⚔️ *{attacker[1]}* HUNTED DOWN AND KILLED *{victim[1]}*! (+50 EXP)"
+        update_player(attacker_id, coins=attacker[2]+500, kills=attacker[4]+1, exp=attacker[3]+50)
+        reply_msg = f"⚔️ *{attacker[1]}* HUNTED DOWN AND KILLED *{victim[1]}*! (+500 Z-COINS & +50 EXP)"
         bot.reply_to(message, reply_msg.upper())
     else:
         if attacker_id != OWNER_ID:
@@ -415,7 +538,6 @@ def rob_user(message):
     robber_id = message.from_user.id
     victim_id = message.reply_to_message.from_user.id
     
-    # Anti-Rob Protection for Owner
     if victim_id == OWNER_ID:
         reply_msg = "⚡ *ERROR:* YOU CANNOT ROB THE CREATOR / GOD! KEEP YOUR HANDS OFF."
         bot.reply_to(message, reply_msg.upper())
