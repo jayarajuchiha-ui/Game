@@ -9,10 +9,10 @@ from PIL import Image, ImageDraw, ImageOps
 from datetime import datetime, timedelta
 
 # Importing credentials directly from your config.py
-from config import BOT_TOKEN, OWNER_ID
+from config import API_TOKEN, OWNER_ID
 
 # Using the existing bot instance configured via config
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(API_TOKEN)
 
 # Database Setup
 def init_db():
