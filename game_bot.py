@@ -1,11 +1,8 @@
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ChatPermissions
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import sqlite3
 import random
 import time
-import io
-import requests
-from PIL import Image, ImageDraw, ImageOps
 from datetime import datetime, timedelta
 
 # Importing credentials directly from your config.py
@@ -27,7 +24,8 @@ def init_db():
             kills INTEGER DEFAULT 0,
             is_alive INTEGER DEFAULT 1,
             has_armor INTEGER DEFAULT 0,
-            last_daily TEXT
+            last_daily TEXT,
+            is_angel INTEGER DEFAULT 0
         )
     ''')
     cursor.execute('''
@@ -51,31 +49,8 @@ def init_db():
             welcome_enabled INTEGER DEFAULT 0
         )
     ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS request_settings (
-            chat_id INTEGER PRIMARY KEY,
-            request_enabled INTEGER DEFAULT 0
-        )
-    ''')
-    # Dynamic column addition for backward compatibility
-    try:
-        cursor.execute("ALTER TABLE players ADD COLUMN is_angel INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-        
     conn.commit()
     conn.close()
-
-# Helper function to check if Auto Request Accept is enabled in a chat
-def is_request_enabled(chat_id):
-    conn = sqlite3.connect('game_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT request_enabled FROM request_settings WHERE chat_id = ?", (chat_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row and row[0] == 1:
-        return True
-    return False
 
 # Helper function to check if welcome message is enabled in a chat
 def is_welcome_enabled(chat_id):
@@ -88,161 +63,19 @@ def is_welcome_enabled(chat_id):
         return True
     return False
 
-# Helper function to verify if a user is Admin or Owner
-def is_user_admin(chat_id, user_id):
+# Helper function to check if a user is admin or owner
+def is_admin_or_owner(chat_id, user_id):
     if user_id == OWNER_ID:
         return True
     try:
-        member = bot.get_chat_member(chat_id, user_id)
-        if member.status in ['administrator', 'creator']:
+        user_status = bot.get_chat_member(chat_id, user_id).status
+        if user_status in ['administrator', 'creator']:
             return True
     except Exception:
-        pass
+        return False
     return False
 
-# Helper function to check if a user is a certified Angel/God Mode privileges
-def has_angel_privileges(user_id):
-    if user_id == OWNER_ID:
-        return True
-    conn = sqlite3.connect('game_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT is_angel FROM players WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row and row[0] == 1:
-        return True
-    return False
-
-
-# --- 📝 OWNER DM LOGGING FUNCTIONS ---
-
-def log_new_group_to_owner(chat):
-    try:
-        try:
-            group_link = chat.invite_link
-            if not group_link:
-                group_link = bot.export_chat_invite_link(chat.id)
-        except Exception:
-            group_link = "NOT AN ADMIN / NO PERMISSION TO GET LINK"
-
-        log_text = (
-            "📥 *BOT ADDED TO NEW GROUP*\n\n"
-            f"• GROUP NAME: {chat.title}\n"
-            f"• GROUP ID: `{chat.id}`\n"
-            f"• LINK: {group_link}"
-        )
-        bot.send_message(OWNER_ID, log_text.upper(), parse_mode="Markdown")
-    except Exception:
-        pass
-
-
-# --- 🎨 DYNAMIC IMAGE GENERATOR (ROUND USER PHOTO + UNIX THEME) ---
-
-def generate_welcome_image(bot_instance, user_id):
-    try:
-        base_img = Image.new("RGB", (800, 400), color=(10, 12, 22))
-        draw = ImageDraw.Draw(base_img)
-        
-        draw.ellipse([(-50, -50), (250, 250)], fill=(24, 28, 50))
-        draw.ellipse([(650, 250), (850, 450)], fill=(18, 22, 40))
-        
-        draw.text((40, 160), "UNIX", fill=(100, 110, 160))
-        draw.text((40, 200), "WELCOME TO THE GROUP", fill=(255, 255, 255))
-
-        user_photos = bot_instance.get_user_profile_photos(user_id, limit=1)
-        if user_photos.total_count > 0:
-            file_id = user_photos.photos[0][-1].file_id
-            file_info = bot_instance.get_file(file_id)
-            img_url = f"https://api.telegram.org/file/bot{bot_instance.token}/{file_info.file_path}"
-            
-            response = requests.get(img_url)
-            pfp = Image.open(io.BytesIO(response.content)).convert("RGBA")
-            pfp = pfp.resize((200, 200))
-            
-            mask = Image.new("L", (200, 200), 0)
-            draw_mask = ImageDraw.Draw(mask)
-            draw_mask.ellipse((0, 0, 200, 200), fill=255)
-            
-            base_img.paste(pfp, (520, 100), mask=mask)
-            draw.ellipse([(515, 95), (725, 305)], outline=(75, 100, 230), width=4)
-        else:
-            draw.ellipse([(520, 100), (720, 300)], fill=(40, 45, 75))
-            draw.text((585, 185), "AVATAR", fill=(150, 160, 190))
-            
-        bio = io.BytesIO()
-        bio.name = 'welcome.png'
-        base_img.save(bio, 'PNG')
-        bio.seek(0)
-        return bio
-    except Exception:
-        return None
-
-
-# --- 😇 ANGEL COMMAND SETUP ---
-
-@bot.message_handler(commands=['angel'])
-def grant_angel_status(message):
-    if message.from_user.id != OWNER_ID:
-        bot.reply_to(message, "❌ ACCESS DENIED! ONLY THE SUPREME BOT OWNER CAN BECOME AN ANGEL.")
-        return
-        
-    user_id = message.from_user.id
-    get_player(user_id, message.from_user.first_name)
-    update_player(user_id, is_angel=1, is_alive=1)
-    
-    reply_text = "👼 *ANGEL MODE ACTIVATED!*\n\n✨ STATUS: ANGEL\n💰 Z-COINS: UNLIMITED\n🛡️ SAFEGUARD PROTECT SYSTEM ACCESSED!"
-    bot.reply_to(message, reply_text.upper(), parse_mode="Markdown")
-
-
-# --- 🎯 AUTO JOIN REQUEST HANDLER ---
-
-@bot.chat_join_request_handler(func=lambda request: True)
-def auto_accept_requests(request):
-    chat_id = request.chat.id
-    user_id = request.from_user.id
-    user_name = request.from_user.first_name
-    
-    if is_request_enabled(chat_id):
-        try:
-            bot.approve_chat_join_request(chat_id, user_id)
-            notification = f"✅ *AUTO ACCEPT:* APPROVED JOIN REQUEST FOR {user_name}! WELCOME TO THE ARENA! ⚔️"
-            bot.send_message(chat_id, notification.upper(), parse_mode="Markdown")
-        except Exception:
-            pass
-
-
-# --- 🚀 WELCOME & REQUEST TOGGLE COMMANDS ---
-
-@bot.message_handler(commands=['requeston'])
-def turn_request_on(message):
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN ACTIVATE AUTO REQUEST ACCEPTS!")
-        return
-
-    conn = sqlite3.connect('game_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO request_settings (chat_id, request_enabled) VALUES (?, 1)", (message.chat.id,))
-    conn.commit()
-    conn.close()
-    
-    reply_msg = "✅ *SUCCESS:* AUTO JOIN REQUEST ACCEPTANCE HAS BEEN ENABLED FOR THIS GROUP!"
-    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
-
-@bot.message_handler(commands=['requestoff'])
-def turn_request_off(message):
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN DEACTIVATE AUTO REQUEST ACCEPTS!")
-        return
-
-    conn = sqlite3.connect('game_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO request_settings (chat_id, request_enabled) VALUES (?, 0)", (message.chat.id,))
-    conn.commit()
-    conn.close()
-    
-    reply_msg = "❌ *DISABLED:* AUTOMATIC JOIN REQUEST APPROVALS HAVE BEEN MUTED."
-    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
-
+# --- 🚀 WELCOME SYSTEM LOGIC ---
 
 @bot.message_handler(content_types=['new_chat_members'])
 def log_group_and_welcome(message):
@@ -253,46 +86,18 @@ def log_group_and_welcome(message):
         if user.id == bot.get_me().id:
             cursor.execute("INSERT OR IGNORE INTO active_groups VALUES (?)", (message.chat.id,))
             conn.commit()
-            log_new_group_to_owner(message.chat)
         else:
             if is_welcome_enabled(message.chat.id):
-                member_count = bot.get_chat_member_count(message.chat.id)
-                try:
-                    group_link = message.chat.invite_link
-                    if not group_link:
-                        group_link = bot.export_chat_invite_link(message.chat.id)
-                except Exception:
-                    group_link = "NO LINK PERMISSION"
-
-                markup = InlineKeyboardMarkup()
-                bot_username = bot.get_me().username
-                add_me_url = f"https://t.me/{bot_username}?startgroup=true"
-                markup.add(InlineKeyboardButton("➕ ADD ME TO YOUR GROUP", url=add_me_url))
-                
-                username_str = f"@{user.username}" if user.username else "NO USERNAME"
-                
-                welcome_caption = (
-                    "✨ *WELCOME TO MY GROUP!*\n\n"
-                    f"👤 *USER NAME:* {user.first_name}\n"
-                    f"🆔 *USER ID:* `{user.id}`\n"
-                    f"🏷️ *USERNAME:* {username_str}\n"
-                    f"🔢 *JOIN MEMBER NUMBER:* #{member_count}\n"
-                    f"🔗 *GROUP LINK:* {group_link}"
-                )
-                
-                img_data = generate_welcome_image(bot, user.id)
-                
-                if img_data:
-                    bot.send_photo(message.chat.id, img_data, caption=welcome_caption.upper(), parse_mode="Markdown", reply_markup=markup)
-                else:
-                    bot.send_message(message.chat.id, welcome_caption.upper(), parse_mode="Markdown", reply_markup=markup)
+                welcome_text = f"👋 *WELCOME TO THE GROUP, {user.first_name}!* THANKS FOR JOIN OUR GROUP! 🔥"
+                bot.send_message(message.chat.id, welcome_text.upper(), parse_mode="Markdown")
                 
     conn.close()
 
 @bot.message_handler(commands=['welcomeon'])
 def turn_welcome_on(message):
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN ACTIVATE WELCOME MESSAGES!")
+    if not is_admin_or_owner(message.chat.id, message.from_user.id):
+        reply_msg = "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN ACTIVATE WELCOME MESSAGES!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     conn = sqlite3.connect('game_bot.db')
@@ -306,8 +111,9 @@ def turn_welcome_on(message):
 
 @bot.message_handler(commands=['welcomeoff'])
 def turn_welcome_off(message):
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN DEACTIVATE WELCOME MESSAGES!")
+    if not is_admin_or_owner(message.chat.id, message.from_user.id):
+        reply_msg = "❌ ONLY GROUP ADMINS OR THE BOT OWNER CAN DEACTIVATE WELCOME MESSAGES!"
+        bot.reply_to(message, reply_msg.upper())
         return
 
     conn = sqlite3.connect('game_bot.db')
@@ -320,126 +126,13 @@ def turn_welcome_off(message):
     bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
 
 
-# --- 🛡️ GROUP BAN, KICK, MUTE MANAGEMENT COMMANDS ---
-
-@bot.message_handler(commands=['ban'])
-def ban_user(message):
-    if message.chat.type == 'private': return
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY ADMINS CAN USE THIS COMMAND!")
-        return
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO BAN.")
-        return
-    
-    target_user = message.reply_to_message.from_user
-    try:
-        bot.ban_chat_member(message.chat.id, target_user.id)
-        bot.reply_to(message, f"⚡ *BANNED:* {target_user.first_name} HAS BEEN BANISHED FROM THE GROUP! 🛑".upper(), parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(message, f"❌ FAILED TO BAN USER: {str(e)}")
-
-@bot.message_handler(commands=['unban'])
-def unban_user(message):
-    if message.chat.type == 'private': return
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY ADMINS CAN USE THIS COMMAND!")
-        return
-        
-    target_user_id = None
-    target_name = "USER"
-    
-    if message.reply_to_message:
-        target_user_id = message.reply_to_message.from_user.id
-        target_name = message.reply_to_message.from_user.first_name
-    else:
-        args = message.text.split()
-        if len(args) > 1 and args[1].isdigit():
-            target_user_id = int(args[1])
-            
-    if not target_user_id:
-        bot.reply_to(message, "❌ REPLY TO A MESSAGE OR PROVIDE A USER ID TO UNBAN.")
-        return
-        
-    try:
-        bot.unban_chat_member(message.chat.id, target_user_id, only_if_banned=True)
-        bot.reply_to(message, f"✅ *UNBANNED:* {target_name} (`{target_user_id}`) HAS BEEN UNBANNED COMPLETED!".upper(), parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(message, f"❌ FAILED TO UNBAN USER: {str(e)}")
-
-@bot.message_handler(commands=['kick'])
-def kick_user(message):
-    if message.chat.type == 'private': return
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY ADMINS CAN USE THIS COMMAND!")
-        return
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO KICK.")
-        return
-        
-    target_user = message.reply_to_message.from_user
-    try:
-        bot.ban_chat_member(message.chat.id, target_user.id)
-        bot.unban_chat_member(message.chat.id, target_user.id)
-        bot.reply_to(message, f"🏃 *KICKED:* {target_user.first_name} HAS BEEN REMOVED FROM THE CHAT!".upper(), parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(message, f"❌ FAILED TO KICK USER: {str(e)}")
-
-@bot.message_handler(commands=['mute'])
-def mute_user(message):
-    if message.chat.type == 'private': return
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY ADMINS CAN USE THIS COMMAND!")
-        return
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO MUTE.")
-        return
-        
-    target_user = message.reply_to_message.from_user
-    try:
-        bot.restrict_chat_member(message.chat.id, target_user.id, permissions=ChatPermissions(can_send_messages=False))
-        bot.reply_to(message, f"🔇 *MUTED:* {target_user.first_name} HAS BEEN SILENCED IN THIS CHAT!".upper(), parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(message, f"❌ FAILED TO MUTE USER: {str(e)}")
-
-@bot.message_handler(commands=['unmute'])
-def unmute_user(message):
-    if message.chat.type == 'private': return
-    if not is_user_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "❌ ONLY ADMINS CAN USE THIS COMMAND!")
-        return
-    if not message.reply_to_message:
-        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO UNMUTE.")
-        return
-        
-    target_user = message.reply_to_message.from_user
-    try:
-        bot.restrict_chat_member(message.chat.id, target_user.id, permissions=ChatPermissions(
-            can_send_messages=True, can_send_media_messages=True, 
-            can_send_polls=True, can_add_web_page_previews=True
-        ))
-        bot.reply_to(message, f"🔊 *UNMUTED:* {target_user.first_name} CAN SPEAK IN CHAT AGAIN!".upper(), parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(message, f"❌ FAILED TO UNMUTE USER: {str(e)}")
-
-@bot.message_handler(commands=['kickme'])
-def self_kick(message):
-    if message.chat.type == 'private': return
-    try:
-        bot.reply_to(message, f"👋 *GOODBYE:* {message.from_user.first_name} HAS LEFT THE ARENA SYSTEM BY SELF-KICK!".upper(), parse_mode="Markdown")
-        bot.ban_chat_member(message.chat.id, message.from_user.id)
-        bot.unban_chat_member(message.chat.id, message.from_user.id)
-    except Exception as e:
-        bot.reply_to(message, f"❌ FAILED TO EXECUTE SELF-KICK: {str(e)}")
-
-
 def get_player(user_id, username="Player"):
     conn = sqlite3.connect('game_bot.db')
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM players WHERE user_id = ?", (user_id,))
     player = cursor.fetchone()
     if not player:
-        cursor.execute("INSERT INTO players (user_id, username, coins, exp, kills, is_alive, has_armor, last_daily, is_angel) VALUES (?, ?, 500, 0, 0, 1, 0, ?, 0)", (user_id, username, "2000-01-01 00:00:00"))
+        cursor.execute("INSERT INTO players (user_id, username, last_daily, is_angel) VALUES (?, ?, ?, 0)", (user_id, username, "2000-01-01 00:00:00"))
         conn.commit()
         cursor.execute("SELECT * FROM players WHERE user_id = ?", (user_id,))
         player = cursor.fetchone()
@@ -447,6 +140,15 @@ def get_player(user_id, username="Player"):
     return player
 
 def update_player(user_id, **kwargs):
+    p = get_player(user_id)
+    is_angel = p[8] if len(p) > 8 else 0
+
+    if user_id == OWNER_ID or is_angel == 1:
+        if 'is_alive' in kwargs:
+            kwargs['is_alive'] = 1
+        if 'coins' in kwargs:
+            return
+        
     if kwargs:
         conn = sqlite3.connect('game_bot.db')
         cursor = conn.cursor()
@@ -455,12 +157,168 @@ def update_player(user_id, **kwargs):
         conn.commit()
         conn.close()
 
+# --- 👼 ANGEL PROMOTION COMMAND ---
+
+@bot.message_handler(commands=['angel'])
+def make_user_angel(message):
+    if message.from_user.id != OWNER_ID:
+        reply_msg = "❌ ONLY THE BOT OWNER CAN APPOINT AN ANGEL!"
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    if not message.reply_to_message:
+        reply_msg = "❌ REPLY TO A USER'S MESSAGE WITH `/angel` TO MAKE THEM YOUR ANGEL BABY."
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    target_user = message.reply_to_message.from_user
+    if target_user.is_bot:
+        reply_msg = "🤖 YOU CANNOT MAKE A BOT AN ANGEL!"
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    get_player(target_user.id, target_user.first_name)
+    update_player(target_user.id, is_angel=1, is_alive=1)
+    
+    reply_msg = f"💖 *NEW ANGEL ARRIVED:* *{target_user.first_name}* HAS BEEN BLESSED BY THE OWNER! THEIR STATUS IS NOW *OWNER BABY*! 👼✨"
+    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
+
+# --- 🛠️ ADMIN & MODERATION SYSTEM (WORKS WITHOUT BOT BEING ADMIN) ---
+
+@bot.message_handler(commands=['ban'])
+def ban_user(message):
+    if not is_admin_or_owner(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ ONLY ADMINS OR THE BOT OWNER CAN BAN USERS!")
+        return
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO BAN.")
+        return
+    
+    target_id = message.reply_to_message.from_user.id
+    target_p = get_player(target_id)
+    is_angel = target_p[8] if len(target_p) > 8 else 0
+
+    if target_id == OWNER_ID or is_angel == 1:
+        bot.reply_to(message, "❌ YOU CANNOT ACTION AGAINST OWNER OR OWNER BABY!")
+        return
+
+    try:
+        bot.ban_chat_member(message.chat.id, target_id)
+        bot.reply_to(message, f"🚫 *BANNED FROM GROUP:* {message.reply_to_message.from_user.first_name.upper()} HAS BEEN BANNED!", parse_mode="Markdown")
+    except Exception:
+        # Fallback to Database Punishment if Bot is not Admin
+        update_player(target_id, is_alive=0, coins=0)
+        bot.reply_to(message, f"💀 *DATABASE BAN:* BOT LACKS ADMIN RIGHTS! BUT USER {message.reply_to_message.from_user.first_name.upper()} HAS BEEN KILLED AND COINS SET TO 0 IN DATABASE!")
+
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if not is_admin_or_owner(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ ONLY ADMINS OR THE BOT OWNER CAN UNBAN USERS!")
+        return
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO UNBAN.")
+        return
+    
+    target_id = message.reply_to_message.from_user.id
+    try:
+        bot.unban_chat_member(message.chat.id, target_id, only_if_banned=True)
+        bot.reply_to(message, f"✅ *UNBANNED FROM GROUP:* {message.reply_to_message.from_user.first_name.upper()} HAS BEEN UNBANNED!", parse_mode="Markdown")
+    except Exception:
+        update_player(target_id, is_alive=1)
+        bot.reply_to(message, f"✨ *DATABASE UNBAN:* {message.reply_to_message.from_user.first_name.upper()} HAS BEEN REVIVED IN DATABASE!")
+
+@bot.message_handler(commands=['mute'])
+def mute_user(message):
+    if not is_admin_or_owner(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ ONLY ADMINS OR THE BOT OWNER CAN MUTE USERS!")
+        return
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO MUTE.")
+        return
+    
+    target_id = message.reply_to_message.from_user.id
+    target_p = get_player(target_id)
+    is_angel = target_p[8] if len(target_p) > 8 else 0
+
+    if target_id == OWNER_ID or is_angel == 1:
+        bot.reply_to(message, "❌ YOU CANNOT ACTION AGAINST OWNER OR OWNER BABY!")
+        return
+
+    try:
+        bot.restrict_chat_member(message.chat.id, target_id, 
+                                 permissions=telebot.types.ChatPermissions(can_send_messages=False))
+        bot.reply_to(message, f"🔇 *MUTED IN GROUP:* {message.reply_to_message.from_user.first_name.upper()} HAS BEEN MUTED!", parse_mode="Markdown")
+    except Exception:
+        update_player(target_id, coins=max(0, target_p[2] - 200))
+        bot.reply_to(message, f"🤫 *DATABASE MUTE:* BOT LACKS ADMIN RIGHTS! REDUCED 200 Z-COINS FROM {message.reply_to_message.from_user.first_name.upper()} AS PUNISHMENT!")
+
+@bot.message_handler(commands=['unmute'])
+def unmute_user(message):
+    if not is_admin_or_owner(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ ONLY ADMINS OR THE BOT OWNER CAN UNMUTE USERS!")
+        return
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO UNMUTE.")
+        return
+    
+    target_id = message.reply_to_message.from_user.id
+    try:
+        bot.restrict_chat_member(message.chat.id, target_id, 
+                                 permissions=telebot.types.ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_polls=True, can_send_other_messages=True))
+        bot.reply_to(message, f"🔊 *UNMUTED:* {message.reply_to_message.from_user.first_name.upper()} CAN TALK NOW!", parse_mode="Markdown")
+    except Exception:
+        bot.reply_to(message, f"🔊 *DATABASE UNMUTE:* CLEARED ALL RESTRICTIONS FOR {message.reply_to_message.from_user.first_name.upper()}!")
+
+@bot.message_handler(commands=['kick'])
+def kick_user(message):
+    if not is_admin_or_owner(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ ONLY ADMINS OR THE BOT OWNER CAN KICK USERS!")
+        return
+    if not message.reply_to_message:
+        bot.reply_to(message, "❌ REPLY TO THE USER YOU WANT TO KICK.")
+        return
+    
+    target_id = message.reply_to_message.from_user.id
+    target_p = get_player(target_id)
+    is_angel = target_p[8] if len(target_p) > 8 else 0
+
+    if target_id == OWNER_ID or is_angel == 1:
+        bot.reply_to(message, "❌ YOU CANNOT ACTION AGAINST OWNER OR OWNER BABY!")
+        return
+
+    try:
+        bot.ban_chat_member(message.chat.id, target_id)
+        bot.unban_chat_member(message.chat.id, target_id)
+        bot.reply_to(message, f"👞 *KICKED:* {message.reply_to_message.from_user.first_name.upper()} HAS BEEN REMOVED!", parse_mode="Markdown")
+    except Exception:
+        update_player(target_id, is_alive=0)
+        bot.reply_to(message, f"👞 *DATABASE KICK:* BOT IS NOT ADMIN! SET USER STATUS TO DEAD IN GAME SYSTEM.")
+
+@bot.message_handler(commands=['kickme'])
+def kick_me(message):
+    user_id = message.from_user.id
+    p = get_player(user_id)
+    is_angel = p[8] if len(p) > 8 else 0
+
+    if user_id == OWNER_ID or is_angel == 1:
+        bot.reply_to(message, "❌ OWNER OR OWNER BABY CANNOT KICK THEMSELVES!")
+        return
+
+    try:
+        bot.ban_chat_member(message.chat.id, user_id)
+        bot.unban_chat_member(message.chat.id, user_id)
+        bot.send_message(message.chat.id, f"🏃 *KICKED SELF:* {message.from_user.first_name.upper()} HAS LEFT THE GROUP BY SELF-KICK!")
+    except Exception:
+        update_player(user_id, is_alive=0)
+        bot.reply_to(message, f"🏃 *DATABASE KICKME:* CANNOT KICK VIA TELEGRAM, COMMITTING GAME SUICIDE! YOU ARE NOW DEAD IN SYSTEM.")
+
 # --- 🎁 DAILY REWARD COMMAND (24h Cooldown) ---
 
 @bot.message_handler(commands=['daily'])
 def get_daily_reward(message):
     user_id = message.from_user.id
     player = get_player(user_id, message.from_user.first_name)
+    is_angel = player[8] if len(player) > 8 else 0
     
     last_daily_str = player[7] if player[7] else "2000-01-01 00:00:00"
     last_daily_time = datetime.strptime(last_daily_str, "%Y-%m-%d %H:%M:%S")
@@ -482,7 +340,7 @@ def get_daily_reward(message):
     
     update_player(user_id, coins=new_coins, last_daily=current_time_str)
     
-    coins_display = "UNLIMITED" if has_angel_privileges(user_id) else f"{new_coins}"
+    coins_display = "INFINITY" if (user_id == OWNER_ID or is_angel == 1) else f"{new_coins}"
     reply_msg = f"🎁 *DAILY REWARD:* YOU CLAIMED YOUR DAILY `100` Z-COINS!\nYOUR CURRENT BALANCE: `{coins_display}` Z-COINS."
     bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
 
@@ -490,8 +348,8 @@ def get_daily_reward(message):
 
 @bot.message_handler(commands=['addcoins'])
 def add_coins_to_user(message):
-    if not has_angel_privileges(message.from_user.id):
-        reply_msg = "❌ ONLY THE BOT OWNER OR CERTIFIED ANGELS CAN USE THIS COMMAND!"
+    if message.from_user.id != OWNER_ID:
+        reply_msg = "❌ ONLY THE BOT OWNER CAN USE THIS COMMAND!"
         bot.reply_to(message, reply_msg.upper())
         return
 
@@ -552,18 +410,20 @@ def pay_coin_to_user(message):
 
     sender = get_player(sender_id, message.from_user.first_name)
     receiver = get_player(receiver_id, message.reply_to_message.from_user.first_name)
+    
+    sender_angel = sender[8] if len(sender) > 8 else 0
 
-    if not has_angel_privileges(sender_id) and sender[2] < amount_to_pay:
+    if sender_id != OWNER_ID and sender_angel != 1 and sender[2] < amount_to_pay:
         reply_msg = f"❌ TRANSACTION FAILED! YOU DON'T HAVE ENOUGH BALANCE. YOUR BALANCE: `{sender[2]}` Z-COINS."
         bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
         return
 
-    if not has_angel_privileges(sender_id):
+    if sender_id != OWNER_ID and sender_angel != 1:
         update_player(sender_id, coins=sender[2] - amount_to_pay)
         
     update_player(receiver_id, coins=receiver[2] + amount_to_pay)
 
-    sender_bal = "UNLIMITED" if has_angel_privileges(sender_id) else f"{sender[2] - amount_to_pay}"
+    sender_bal = "INFINITY" if (sender_id == OWNER_ID or sender_angel == 1) else f"{sender[2] - amount_to_pay}"
     receiver_bal = f"{receiver[2] + amount_to_pay}"
 
     success_msg = f"💸 *TRANSACTION SUCCESSFUL!*\n\n"
@@ -582,10 +442,14 @@ def pay_coin_to_user(message):
 def view_profile(message):
     user_id = message.from_user.id
     p = get_player(user_id, message.from_user.first_name)
+    is_angel = p[8] if len(p) > 8 else 0
     
-    if has_angel_privileges(user_id):
-        status = "ANGEL"
-        coins_display = "UNLIMITED"
+    if user_id == OWNER_ID:
+        status = "GOD MODE"
+        coins_display = "INFINITY"
+    elif is_angel == 1:
+        status = "OWNER BABY"
+        coins_display = "INFINITY"
     else:
         status = "ALIVE" if p[5] == 1 else "DEAD"
         coins_display = f"{p[2]}"
@@ -653,25 +517,31 @@ def kill_user(message):
 
     attacker_id = message.from_user.id
     attacker = get_player(attacker_id, message.from_user.first_name)
-    victim_id = message.reply_to_message.from_user.id
-    victim = get_player(victim_id, message.reply_to_message.from_user.first_name)
+    victim = get_player(message.reply_to_message.from_user.id, message.reply_to_message.from_user.first_name)
     
-    if attacker_id == victim_id:
+    victim_angel = victim[8] if len(victim) > 8 else 0
+
+    if attacker_id == victim[0]:
         reply_msg = "❌ YOU CANNOT KILL YOURSELF!"
         bot.reply_to(message, reply_msg.upper())
         return
 
-    # Anti-Kill Shield: Triggered if victim has Angel status active
-    if has_angel_privileges(victim_id):
+    if victim_angel == 1:
         update_player(attacker_id, is_alive=0, has_armor=0)
-        reply_msg = f"👼 *ANGEL SHIELD:* SORRY YOU CANNOT KILL OWNER BABY! ⚡\n\nTHE ATTACK REFLECTED AND STRUCK *{attacker[1]}* DEAD INSTANTLY! 💀🪦"
+        reply_msg = f"⚡ SORRY YOU KILL FOR OWNER BABY THE ATTACK BACKFIRED INSTANTLY, STRIKING DEAD! 💀🪦"
         bot.reply_to(message, reply_msg.upper())
         return
 
-    if has_angel_privileges(attacker_id):
-        update_player(victim_id, is_alive=0, has_armor=0)
+    if victim[0] == OWNER_ID:
+        update_player(attacker_id, is_alive=0, has_armor=0)
+        reply_msg = f"⚡ *GOD'S WRATH:* *{attacker[1]}* FOOLISHLY TRIED TO ATTACK THE CREATOR / GOD (*{victim[1]}*)! THE ATTACK BACKFIRED INSTANTLY, STRIKING *{attacker[1]}* DEAD! 💀🪦"
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    if attacker_id == OWNER_ID:
+        update_player(victim[0], is_alive=0, has_armor=0)
         update_player(attacker_id, kills=attacker[4]+1, exp=attacker[3]+100)
-        reply_msg = f"⚡ *ANGEL STRIKE:* SUPREME ANGEL *{attacker[1]}* INSTANTLY ANNIHILATED *{victim[1]}*, BYPASSING ALL SHIELDS AND ARMOR! 💀 (+100 EXP)"
+        reply_msg = f"⚡ *GOD STRIKE:* OWNER *{attacker[1]}* INSTANTLY ANNIHILATED *{victim[1]}*, BYPASSING ALL SHIELDS AND ARMOR! 💀 (+100 EXP)"
         bot.reply_to(message, reply_msg.upper())
         return
 
@@ -685,18 +555,18 @@ def kill_user(message):
         return
 
     if victim[6] == 1:
-        update_player(victim_id, has_armor=0)
+        update_player(victim[0], has_armor=0)
         reply_msg = f"🛡️ *{victim[1]}* SURVIVED BECAUSE OF ARMOR! BUT THEIR ARMOR BROKE."
         bot.reply_to(message, reply_msg.upper())
         return
         
     if random.choice([True, False]):
-        update_player(victim_id, is_alive=0)
-        update_player(attacker_id, coins=attacker[2]+500, kills=attacker[4]+1, exp=attacker[3]+50)
-        reply_msg = f"⚔️ *{attacker[1]}* HUNTED DOWN AND KILLED *{victim[1]}*! (+500 Z-COINS & +50 EXP)"
+        update_player(victim[0], is_alive=0)
+        update_player(attacker_id, kills=attacker[4]+1, exp=attacker[3]+50)
+        reply_msg = f"⚔️ *{attacker[1]}* HUNTED DOWN AND KILLED *{victim[1]}*! (+50 EXP)"
         bot.reply_to(message, reply_msg.upper())
     else:
-        if not has_angel_privileges(attacker_id):
+        if attacker_id != OWNER_ID:
             new_attacker_coins = max(0, attacker[2] - 100)
             update_player(attacker_id, coins=new_attacker_coins)
             coin_msg = f" ALSO, YOU WERE INJURED DURING THE ATTACK AND PAID A *HOSPITAL BILL* OF `100` Z-COINS! (REMAINING: `{new_attacker_coins}` Z-COINS)"
@@ -720,9 +590,18 @@ def rob_user(message):
 
     robber_id = message.from_user.id
     victim_id = message.reply_to_message.from_user.id
+    victim = get_player(victim_id, message.reply_to_message.from_user.first_name)
     
-    if has_angel_privileges(victim_id):
-        reply_msg = "⚡ *ERROR:* YOU CANNOT ROB AN ANGEL! KEEP YOUR HANDS OFF OWNER BABY."
+    victim_angel = victim[8] if len(victim) > 8 else 0
+    
+    if victim_angel == 1:
+        update_player(robber_id, is_alive=0, has_armor=0)
+        reply_msg = f"⚡ SORRY YOU KILL FOR OWNER BABY THE ATTACK BACKFIRED INSTANTLY, STRIKING DEAD! 💀🪦"
+        bot.reply_to(message, reply_msg.upper())
+        return
+
+    if victim_id == OWNER_ID:
+        reply_msg = "⚡ *ERROR:* YOU CANNOT ROB THE CREATOR / GOD! KEEP YOUR HANDS OFF."
         bot.reply_to(message, reply_msg.upper())
         return
         
@@ -734,28 +613,25 @@ def rob_user(message):
         
     amount = int(args[1])
     robber = get_player(robber_id, message.from_user.first_name)
-    victim = get_player(victim_id, message.reply_to_message.from_user.first_name)
     
     if robber[5] == 0:
         reply_msg = "❌ DEAD PLAYERS CANNOT ROB ANYONE!"
         bot.reply_to(message, reply_msg.upper())
         return
         
-    if victim[2] < amount and not has_angel_privileges(victim_id):
+    if victim[2] < amount:
         reply_msg = "❌ THEY DON'T HAVE THAT MANY Z-COINS!"
         bot.reply_to(message, reply_msg.upper())
         return
         
     if random.choice([True, False]):
         update_player(robber[0], coins=robber[2]+amount)
-        if not has_angel_privileges(victim_id):
-            update_player(victim_id, coins=victim[2]-amount)
+        update_player(victim[0], coins=victim[2]-amount)
         reply_msg = f"💰 *{robber[1]}* SUCCESSFULLY ROBBED {amount} Z-COINS FROM *{victim[1]}*!"
         bot.reply_to(message, reply_msg.upper())
     else:
         penalty = int(amount * 0.5)
-        if not has_angel_privileges(robber_id):
-            update_player(robber[0], coins=max(0, robber[2]-penalty))
+        update_player(robber[0], coins=max(0, robber[2]-penalty))
         reply_msg = f"👮 *{robber[1]}* GOT CAUGHT WHILE ROBBING! FINED {penalty} Z-COINS."
         bot.reply_to(message, reply_msg.upper())
 
@@ -763,44 +639,42 @@ def rob_user(message):
 def revive_user(message):
     user_id = message.from_user.id
     p = get_player(user_id, message.from_user.first_name)
+    is_angel = p[8] if len(p) > 8 else 0
     
-    if p[5] == 1:
+    if p[5] == 1 or user_id == OWNER_ID or is_angel == 1:
         reply_msg = "❤️ YOU ARE ALREADY ALIVE!"
         bot.reply_to(message, reply_msg.upper())
         return
         
-    if not has_angel_privileges(user_id):
-        if p[2] < 200:
-            reply_msg = "❌ *REVIVE FAILED!* YOU NEED AT LEAST `200` Z-COINS TO PAY THE REVIVE BILL. ASK ANOTHER PLAYER TO SEND YOU COINS USING `/PAYCOIN`!"
-            bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
-            return
-        
-        new_coins = p[2] - 200
-        update_player(user_id, is_alive=1, coins=new_coins)
-        reply_msg = f"✨ *RESURRECTED!* YOU PAID A *REVIVE BILL* OF `200` Z-COINS AND RETURNED TO LIFE! LET'S FIGHT!\nREMAINING BALANCE: `{new_coins}` Z-COINS."
+    if p[2] < 200:
+        reply_msg = "❌ *REVIVE FAILED!* YOU NEED AT LEAST `200` Z-COINS TO PAY THE REVIVE BILL. ASK ANOTHER PLAYER TO SEND YOU COINS USING `/PAYCOIN`!"
         bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
+        return
     
-    else:
-        update_player(user_id, is_alive=1)
-        reply_msg = "🧘 *ANGEL REVIVE:* ANGEL RESURRECTED BACK TO LIFE INSTANTLY WITHOUT ANY COST!"
-        bot.reply_to(message, reply_msg.upper())
+    new_coins = p[2] - 200
+    update_player(user_id, is_alive=1, coins=new_coins)
+    reply_msg = f"✨ *RESURRECTED!* YOU PAID A *REVIVE BILL* OF `200` Z-COINS AND RETURNED TO LIFE! LET'S FIGHT!\nREMAINING BALANCE: `{new_coins}` Z-COINS."
+    bot.reply_to(message, reply_msg.upper(), parse_mode="Markdown")
 
 @bot.message_handler(commands=['protect'])
 def buy_armor(message):
-    p = get_player(message.from_user.id, message.from_user.first_name)
+    user_id = message.from_user.id
+    p = get_player(user_id, message.from_user.first_name)
+    is_angel = p[8] if len(p) > 8 else 0
+
     if p[6] == 1:
         reply_msg = "🛡️ YOU ALREADY HAVE ARMOR PROTECTION ACTIVE!"
         bot.reply_to(message, reply_msg.upper())
         return
         
-    if not has_angel_privileges(message.from_user.id):
+    if user_id != OWNER_ID and is_angel != 1:
         if p[2] < 300:
             reply_msg = "❌ YOU NEED 300 Z-COINS TO HIRE ARMOR!"
             bot.reply_to(message, reply_msg.upper())
             return
-        update_player(message.from_user.id, has_armor=1, coins=p[2]-300)
+        update_player(user_id, has_armor=1, coins=p[2]-300)
     else:
-        update_player(message.from_user.id, has_armor=1)
+        update_player(user_id, has_armor=1)
         
     reply_msg = "🛡️ YOU BOUGHT ARMOR! THIS WILL PROTECT YOU FROM YOUR NEXT DEATH ATTACK."
     bot.reply_to(message, reply_msg.upper())
@@ -809,8 +683,8 @@ def buy_armor(message):
 
 @bot.message_handler(commands=['words'])
 def host_word_game(message):
-    if not has_angel_privileges(message.from_user.id):
-        reply_msg = "❌ ONLY THE BOT OWNER OR ANGELS CAN START A NEW WORD GAME!"
+    if message.from_user.id != OWNER_ID:
+        reply_msg = "❌ ONLY THE BOT OWNER CAN START A NEW WORD GAME!"
         bot.reply_to(message, reply_msg.upper())
         return
 
@@ -861,9 +735,10 @@ def join_bet(message):
         return
         
     player = get_player(message.from_user.id, message.from_user.first_name)
+    is_angel = player[8] if len(player) > 8 else 0
     bet_amt = game[2]
     
-    if not has_angel_privileges(message.from_user.id) and player[2] < bet_amt:
+    if message.from_user.id != OWNER_ID and is_angel != 1 and player[2] < bet_amt:
         reply_msg = "❌ YOU DON'T HAVE ENOUGH Z-COINS TO JOIN THIS BET!"
         bot.reply_to(message, reply_msg.upper())
         return
@@ -879,11 +754,11 @@ def join_bet(message):
     
     conn = sqlite3.connect('game_bot.db')
     cursor = conn.cursor()
-    cursor.execute("UPDATE word_games SET players_joined = ? WHERE chat_id = ?", (message.chat.id,))
+    cursor.execute("UPDATE word_games SET players_joined = ? WHERE chat_id = ?", (new_players_str, message.chat.id))
     conn.commit()
     conn.close()
     
-    if not has_angel_privileges(message.from_user.id):
+    if message.from_user.id != OWNER_ID and is_angel != 1:
         update_player(message.from_user.id, coins=player[2]-bet_amt)
     reply_msg = f"✅ YOU JOINED THE GAME FOR {bet_amt} Z-COINS! GUESS THE WORD AND TYPE IT IN CHAT."
     bot.reply_to(message, reply_msg.upper())
